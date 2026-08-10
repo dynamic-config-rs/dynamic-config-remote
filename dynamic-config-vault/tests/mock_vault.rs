@@ -123,3 +123,34 @@ fn an_unreachable_vault_is_a_prompt_error_naming_the_address() {
     assert_eq!(error.kind(), dynamic_config::ErrorKind::Remote);
     assert!(error.to_string().contains("127.0.0.1:9"), "{error}");
 }
+
+/// A panicking callback must end the watch with an orderly error — not
+/// unwind through the loop and kill the caller's thread with the handle
+/// still looking alive.
+#[test]
+fn a_panicking_callback_ends_the_watch_with_an_error() {
+    // Two metadata answers with moving versions: the first tick primes, the
+    // second delivers a change into the panicking callback.
+    let (address, _requests, server) = scripted(vec![
+        http("200 OK", r#"{"data": {"current_version": 1}}"#),
+        http("200 OK", r#"{"data": {"current_version": 2}}"#),
+        http(
+            "200 OK",
+            r#"{"data": {"data": {"host": "db"}, "metadata": {"version": 2}}}"#,
+        ),
+    ]);
+
+    let source = Vault::new(&address, "secret", "myapp/db").with_token("supplied");
+    let watch = RemoteWatch::new();
+    let watching = watch.watching();
+
+    let error = source
+        .watch(&watching, Duration::from_millis(50), |_| {
+            panic!("a bug in the caller's callback")
+        })
+        .expect_err("the panic must surface as an error, not kill the thread");
+
+    server.join().unwrap();
+
+    assert!(error.to_string().contains("panicked"), "{error}");
+}

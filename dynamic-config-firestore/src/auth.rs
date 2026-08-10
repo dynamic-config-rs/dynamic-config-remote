@@ -5,7 +5,13 @@ use std::time::{Duration, Instant};
 
 use dynamic_config::Error;
 
-/// How close to expiry a token is replaced rather than used.
+/// How close to expiry a token may get before it is refreshed.
+///
+/// One name and one value across the three token-caching store crates, on
+/// purpose. The margin is also the only cushion against clock skew: expiry
+/// is computed from a *local* `Instant` plus a *server-reported* TTL, so any
+/// disagreement between the server's issue time and our receipt time eats
+/// into it. A minute absorbs the skew a real fleet actually has.
 const REFRESH_WITHIN: Duration = Duration::from_secs(60);
 
 /// Where a Google workload asks for its own token. Reachable from GKE, Cloud
@@ -15,7 +21,7 @@ const METADATA_TOKEN_URL: &str =
     "http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token";
 
 /// How to obtain an access token for the Firestore API.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 #[non_exhaustive]
 pub enum Auth {
     /// No token at all, for the Firestore emulator.
@@ -65,8 +71,21 @@ impl Auth {
     }
 }
 
+// Debug is hand-written for every type on this page that can hold a secret:
+// a derive prints payloads, and the payload here is a live GCP access token.
+impl std::fmt::Debug for Auth {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Emulator => f.write_str("Emulator"),
+            Self::AccessToken(_) => f.write_str("AccessToken(***)"),
+            Self::MetadataServer { url } => {
+                f.debug_struct("MetadataServer").field("url", url).finish()
+            }
+        }
+    }
+}
+
 /// A token and when it expires.
-#[derive(Debug)]
 struct Token {
     secret: String,
     /// `None` for a token nothing said an expiry for.
@@ -78,6 +97,15 @@ impl Token {
         self.expires.is_some_and(|expires| {
             expires.saturating_duration_since(Instant::now()) < REFRESH_WITHIN
         })
+    }
+}
+
+impl std::fmt::Debug for Token {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Token")
+            .field("secret", &"***")
+            .field("expires", &self.expires)
+            .finish()
     }
 }
 

@@ -144,10 +144,11 @@ impl Redis {
     ///
     /// # Errors
     ///
-    /// If the subscription cannot be established, if keyspace notifications are
-    /// off, or if `on_change` returns an error — which ends the watch, so a
-    /// caller that wants to survive a bad document should log it and return
-    /// `Ok`.
+    /// If the subscription cannot be established, if keyspace notifications
+    /// are off, if the subscription itself breaks — a dead connection ends
+    /// the watch with an error rather than spinning; restart it to
+    /// resubscribe — or if `on_change` returns an error, so a caller that
+    /// wants to survive a bad document should log it and return `Ok`.
     pub fn watch<F>(&self, watching: &Watching, mut on_change: F) -> Result<(), Error>
     where
         F: FnMut(Fetched) -> Result<(), Error>,
@@ -173,7 +174,7 @@ impl Redis {
         // reads as "configuration stopped changing" rather than as a failure.
         let database = self.database().ok_or_else(|| {
             Error::remote(format!(
-                "{}: cannot determine the database index the connection lands                  on, so the keyspace channel cannot be named",
+                "{}: cannot determine the database index the connection lands on, so the keyspace channel cannot be named",
                 self.describe()
             ))
         })?;
@@ -191,9 +192,22 @@ impl Redis {
             .map_err(|error| Error::remote(format!("{}: {error}", self.describe())))?;
 
         while watching.keep_going() {
-            let Ok(message) = pubsub.get_message() else {
-                // A timeout, which is how this loop gets a chance to stop.
-                continue;
+            let message = match pubsub.get_message() {
+                Ok(message) => message,
+                // A timeout is the design: it is how this loop gets a chance
+                // to notice `stop`. Anything else is a broken subscription —
+                // and a broken socket returns *immediately*, so treating it
+                // as a timeout used to spin this loop at full CPU forever
+                // while the handle still looked alive. etcd and NATS end
+                // their watch with an error for the same condition; so does
+                // this now.
+                Err(error) if error.is_timeout() => continue,
+                Err(error) => {
+                    return Err(Error::remote(format!(
+                        "{}: the subscription failed: {error}",
+                        self.describe()
+                    )))
+                }
             };
 
             let event: String = message.get_payload().unwrap_or_default();
@@ -208,7 +222,7 @@ impl Redis {
             // on failure, so a read that died with its socket does not leave a
             // dead connection for every later notification to trip over.
             match self.fetch() {
-                Ok(document) => on_change(document)?,
+                Ok(document) => guarded(&mut on_change, document, &self.describe())?,
                 // The notification arrived and the read did not: a transient
                 // failure, and the next write will notify again.
                 Err(_) => continue,
@@ -350,7 +364,10 @@ fn redacted(url: &str) -> String {
         return url.to_owned();
     };
 
-    let Some((authority, tail)) = rest.split_once('@') else {
+    // `rsplit_once`, not `split_once`: a password may itself contain `@`
+    // (`redis://user:p@ss@host`), and splitting on the *first* one would keep
+    // the tail of the password in the "redacted" output.
+    let Some((authority, tail)) = rest.rsplit_once('@') else {
         return url.to_owned();
     };
 
@@ -361,6 +378,25 @@ fn redacted(url: &str) -> String {
     format!("{scheme}://{user}:***@{tail}")
 }
 
+/// Runs the watch callback with a panic net.
+///
+/// The callback is the caller's code on the caller's thread; a panic in it
+/// used to unwind through the watch loop and kill that thread with the
+/// `RemoteWatch` handle still looking alive. Caught, it becomes an orderly
+/// error: the watch ends, and the caller is told why.
+fn guarded<F>(on_change: &mut F, document: Fetched, described: &str) -> Result<(), Error>
+where
+    F: FnMut(Fetched) -> Result<(), Error>,
+{
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| on_change(document))).unwrap_or_else(
+        |_| {
+            Err(Error::remote(format!(
+                "{described}: the watch callback panicked; the watch is stopped"
+            )))
+        },
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -369,6 +405,14 @@ mod tests {
     fn a_password_never_reaches_an_error_message() {
         assert_eq!(
             redacted("redis://app:hunter2@redis.internal:6379"),
+            "redis://app:***@redis.internal:6379"
+        );
+    }
+
+    #[test]
+    fn a_password_containing_at_signs_is_fully_redacted() {
+        assert_eq!(
+            redacted("redis://app:p@ss@w@rd@redis.internal:6379"),
             "redis://app:***@redis.internal:6379"
         );
     }

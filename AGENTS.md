@@ -111,6 +111,12 @@ was available" at runtime rather than a compile error.
 **Trusting a container registry.** A Docker Hub 429 looks exactly like a broken
 test. Pre-pull in CI, and prefer a registry without anonymous limits.
 
+**Deriving `Debug` over anything that can hold a credential or a fetched
+document.** A derive prints every field; three store crates shipped 0.0.1
+printing Vault/Consul/GCP tokens on `{:?}`. Hand-write `Debug` for any type
+whose fields can carry a secret (redact the secret, keep the fields a
+debugger needs), and add a planted-token test asserting `{:?}` excludes it.
+
 **Stacking `#[cfg]` attributes.** Two `#[cfg]`s on one item AND together:
 `#[cfg(unix)] #[cfg(not(unix))]` is unsatisfiable and compiles to *nothing*,
 silently. Three tests in `write.rs` never ran for months because of exactly

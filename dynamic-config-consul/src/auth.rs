@@ -17,14 +17,20 @@ use std::time::{Duration, Instant};
 
 use dynamic_config::Error;
 
-/// How close to expiry a token is replaced rather than used.
-const REPLACE_WITHIN: Duration = Duration::from_secs(30);
+/// How close to expiry a token may get before it is refreshed.
+///
+/// One name and one value across the three token-caching store crates, on
+/// purpose. The margin is also the only cushion against clock skew: expiry
+/// is computed from a *local* `Instant` plus a *server-reported* TTL, so any
+/// disagreement between the server's issue time and our receipt time eats
+/// into it. A minute absorbs the skew a real fleet actually has.
+const REFRESH_WITHIN: Duration = Duration::from_secs(60);
 
 /// Where a Kubernetes service-account token is mounted, by convention.
 pub const SERVICE_ACCOUNT_TOKEN: &str = "/var/run/secrets/kubernetes.io/serviceaccount/token";
 
 /// How to obtain a Consul ACL token.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 #[non_exhaustive]
 pub enum Auth {
     /// No token at all.
@@ -55,7 +61,7 @@ pub enum Auth {
 }
 
 /// Where a bearer token comes from.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 #[non_exhaustive]
 pub enum Bearer {
     /// A literal token.
@@ -175,7 +181,7 @@ impl Auth {
 }
 
 /// A token and when it expires.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub(crate) struct Token {
     pub(crate) secret: String,
     /// `None` for a token Consul did not put an expiry on.
@@ -196,8 +202,46 @@ impl Token {
 
     fn is_stale(&self) -> bool {
         self.expires.is_some_and(|expires| {
-            expires.saturating_duration_since(Instant::now()) < REPLACE_WITHIN
+            expires.saturating_duration_since(Instant::now()) < REFRESH_WITHIN
         })
+    }
+}
+
+// Debug is hand-written for every type on this page that can hold a secret:
+// a derive prints payloads, and the payloads here are ACL tokens. What IS
+// printed — variant names, method names, expiry — is what a person debugging
+// auth actually needs.
+impl std::fmt::Debug for Auth {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Anonymous => f.write_str("Anonymous"),
+            Self::Token(_) => f.write_str("Token(***)"),
+            Self::Login { method, meta, .. } => f
+                .debug_struct("Login")
+                .field("method", method)
+                .field("meta", meta)
+                .finish_non_exhaustive(),
+        }
+    }
+}
+
+impl std::fmt::Debug for Bearer {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Literal(_) => f.write_str("Literal(***)"),
+            // The path is not a secret — the token *behind* it is, and it is
+            // never held here.
+            Self::File(path) => f.debug_tuple("File").field(path).finish(),
+        }
+    }
+}
+
+impl std::fmt::Debug for Token {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Token")
+            .field("secret", &"***")
+            .field("expires", &self.expires)
+            .finish()
     }
 }
 
@@ -313,7 +357,7 @@ mod tests {
     #[test]
     fn a_token_near_its_expiry_is_stale() {
         assert!(!Token::new("t".to_owned(), Some(Duration::from_secs(3600))).is_stale());
-        assert!(Token::new("t".to_owned(), Some(REPLACE_WITHIN / 2)).is_stale());
+        assert!(Token::new("t".to_owned(), Some(REFRESH_WITHIN / 2)).is_stale());
     }
 
     #[test]

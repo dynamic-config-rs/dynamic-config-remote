@@ -277,9 +277,35 @@ impl Etcd {
             outcome => outcome?,
         };
 
-        while let Some(response) = stream.message().await.map_err(|error| {
-            Error::remote(format!("{}: the watch failed: {error}", self.describe()))
-        })? {
+        loop {
+            let response = match stream.message().await {
+                Ok(Some(response)) => response,
+                Ok(None) => break,
+                Err(error) => {
+                    let wrapped =
+                        Error::remote(format!("{}: the watch failed: {error}", self.describe()));
+
+                    // The single most predictable failure of a long-lived
+                    // watch: etcd's simple tokens default to a five-minute
+                    // TTL, and a watch is long-lived by definition. Refresh
+                    // and re-establish instead of handing the caller a
+                    // terminal error for something the credentials can cure.
+                    // Naturally bounded: a refresh that fails propagates, so
+                    // this cannot loop on a genuinely dead token. A brief gap
+                    // is possible while the stream is down; the next write
+                    // still arrives, exactly as it would across any
+                    // reconnect.
+                    if is_expired_token(&wrapped) {
+                        self.refresh_token().await?;
+                        stream = self.watch_once().await?;
+
+                        continue;
+                    }
+
+                    return Err(wrapped);
+                }
+            };
+
             // etcd cancels a watch it can no longer serve — most often because
             // the revision it started from has been compacted away. Returning
             // `Ok` here would leave the caller's task finished, the
@@ -306,7 +332,7 @@ impl Etcd {
                     ))
                 })?;
 
-                on_change(Fetched::new(text, format))?;
+                guarded(&mut on_change, Fetched::new(text, format), &self.describe())?;
             }
         }
 
@@ -447,4 +473,23 @@ impl std::fmt::Debug for Etcd {
             .field("format", &self.format)
             .finish_non_exhaustive()
     }
+}
+
+/// Runs the watch callback with a panic net.
+///
+/// The callback is the caller's code on the caller's thread; a panic in it
+/// used to unwind through the watch loop and kill that thread with the
+/// `RemoteWatch` handle still looking alive. Caught, it becomes an orderly
+/// error: the watch ends, and the caller is told why.
+fn guarded<F>(on_change: &mut F, document: Fetched, described: &str) -> Result<(), Error>
+where
+    F: FnMut(Fetched) -> Result<(), Error>,
+{
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| on_change(document))).unwrap_or_else(
+        |_| {
+            Err(Error::remote(format!(
+                "{described}: the watch callback panicked; the watch is stopped"
+            )))
+        },
+    )
 }

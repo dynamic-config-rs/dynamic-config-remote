@@ -95,7 +95,6 @@ impl CallError {
 ///
 /// Not `Clone`: it holds the session that caches an access token, and two
 /// clones fetching tokens separately would double the traffic.
-#[derive(Debug)]
 pub struct Firestore {
     project: String,
     database: String,
@@ -234,7 +233,7 @@ impl Firestore {
                 // waited out.
                 let Some(updated) = updated else {
                     return Err(Error::remote(format!(
-                        "{}: the document has no `updateTime`, so changes                          cannot be detected; is this a real Firestore?",
+                        "{}: the document has no `updateTime`, so changes cannot be detected; is this a real Firestore?",
                         self.describe()
                     )));
                 };
@@ -246,7 +245,7 @@ impl Firestore {
                 } else if seen.as_deref() != Some(&*updated) {
                     seen = Some(updated);
 
-                    on_change(document)?;
+                    guarded(&mut on_change, document, &self.describe())?;
                 }
             }
 
@@ -360,6 +359,23 @@ impl Firestore {
     }
 }
 
+// Hand-written, never derived: a derive would print every field, and the
+// fields include credentials. `{:?}` reaching a log is an ordinary accident —
+// a `dbg!`, a `tracing::debug!(?source)` — and an accident must not disclose
+// a secret. The other store crates follow the same rule.
+impl std::fmt::Debug for Firestore {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Firestore")
+            .field("project", &self.project)
+            .field("database", &self.database)
+            .field("path", &self.path)
+            .field("key", &self.key)
+            .field("endpoint", &self.endpoint)
+            .field("auth", &self.auth)
+            .finish_non_exhaustive()
+    }
+}
+
 impl RemoteSource for Firestore {
     fn fetch(&self) -> Result<Fetched, Error> {
         self.read().map(|(document, _updated)| document)
@@ -373,5 +389,43 @@ impl RemoteSource for Firestore {
             Some(endpoint) => format!("firestore {endpoint} {}/{}", self.project, self.path),
             None => format!("firestore {}/{}", self.project, self.path),
         }
+    }
+}
+
+/// Runs the watch callback with a panic net.
+///
+/// The callback is the caller's code on the caller's thread; a panic in it
+/// used to unwind through the watch loop and kill that thread with the
+/// `RemoteWatch` handle still looking alive. Caught, it becomes an orderly
+/// error: the watch ends, and the caller is told why.
+fn guarded<F>(on_change: &mut F, document: Fetched, described: &str) -> Result<(), Error>
+where
+    F: FnMut(Fetched) -> Result<(), Error>,
+{
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| on_change(document))).unwrap_or_else(
+        |_| {
+            Err(Error::remote(format!(
+                "{described}: the watch callback panicked; the watch is stopped"
+            )))
+        },
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn debug_never_prints_a_credential() {
+        let source = Firestore::new("my-project", "config/db")
+            .with_auth(Auth::access_token("hunter2-access-token"));
+
+        let printed = format!(
+            "{source:?} {:?}",
+            Auth::access_token("hunter2-access-token")
+        );
+
+        assert!(!printed.contains("hunter2"), "{printed}");
+        assert!(printed.contains("AccessToken(***)"), "{printed}");
     }
 }

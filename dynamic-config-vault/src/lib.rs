@@ -125,7 +125,6 @@ enum CheckError {
 /// Not `Clone`: the session holds the current token, and two clones sharing a
 /// path while logging in separately would double the login traffic and halve
 /// the usefulness of the cache. Wrap it in an `Arc` if two places need one.
-#[derive(Debug)]
 pub struct Vault {
     address: String,
     mount: String,
@@ -314,7 +313,7 @@ impl Vault {
                     if let Ok((document, version)) = self.read() {
                         seen = Some(version);
 
-                        on_change(document)?;
+                        guarded(&mut on_change, document, &self.describe())?;
                     }
                 }
 
@@ -599,6 +598,23 @@ impl Vault {
     }
 }
 
+// Hand-written, never derived: a derive would print every field, and the
+// fields include credentials. `{:?}` reaching a log is an ordinary accident —
+// a `dbg!`, a `tracing::debug!(?source)` — and an accident must not disclose
+// a secret. The other store crates follow the same rule.
+impl std::fmt::Debug for Vault {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Vault")
+            .field("address", &self.address)
+            .field("mount", &self.mount)
+            .field("path", &self.path)
+            .field("key", &self.key)
+            .field("namespace", &self.namespace)
+            .field("auth", &self.auth)
+            .finish_non_exhaustive()
+    }
+}
+
 impl RemoteSource for Vault {
     fn fetch(&self) -> Result<Fetched, Error> {
         self.read().map(|(document, _version)| document)
@@ -608,5 +624,49 @@ impl RemoteSource for Vault {
         // The address too: a program with a staging Vault and a production
         // Vault should never have to guess which one refused it.
         format!("vault {} {}/{}", self.address, self.mount, self.path)
+    }
+}
+
+/// Runs the watch callback with a panic net.
+///
+/// The callback is the caller's code on the caller's thread; a panic in it
+/// used to unwind through the watch loop and kill that thread with the
+/// `RemoteWatch` handle still looking alive. Caught, it becomes an orderly
+/// error: the watch ends, and the caller is told why.
+fn guarded<F>(on_change: &mut F, document: Fetched, described: &str) -> Result<(), Error>
+where
+    F: FnMut(Fetched) -> Result<(), Error>,
+{
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| on_change(document))).unwrap_or_else(
+        |_| {
+            Err(Error::remote(format!(
+                "{described}: the watch callback panicked; the watch is stopped"
+            )))
+        },
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn debug_never_prints_a_credential() {
+        let source = Vault::new("http://vault:8200", "secret", "myapp/db")
+            .with_auth(Auth::app_role("hunter2-role-id", "hunter2-secret-id"));
+
+        let printed = format!(
+            "{source:?} {:?} {:?}",
+            Auth::token("hunter2-token"),
+            Auth::userpass("admin", "hunter2-password"),
+        );
+
+        assert!(!printed.contains("hunter2-secret-id"), "{printed}");
+        assert!(!printed.contains("hunter2-token"), "{printed}");
+        assert!(!printed.contains("hunter2-password"), "{printed}");
+        // The non-secret halves stay printable — that is what makes the
+        // redaction usable rather than a black hole.
+        assert!(printed.contains("hunter2-role-id"), "{printed}");
+        assert!(printed.contains("admin"), "{printed}");
     }
 }

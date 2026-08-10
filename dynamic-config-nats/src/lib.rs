@@ -327,7 +327,7 @@ impl Nats {
                 ))
             })?;
 
-            on_change(Fetched::new(text, format))?;
+            guarded(&mut on_change, Fetched::new(text, format), &self.describe())?;
         }
 
         // The stream ended without an error: the connection went away, or the
@@ -387,4 +387,23 @@ impl std::fmt::Debug for Nats {
             .field("format", &self.format)
             .finish_non_exhaustive()
     }
+}
+
+/// Runs the watch callback with a panic net.
+///
+/// The callback is the caller's code on the caller's thread; a panic in it
+/// used to unwind through the watch loop and kill that thread with the
+/// `RemoteWatch` handle still looking alive. Caught, it becomes an orderly
+/// error: the watch ends, and the caller is told why.
+fn guarded<F>(on_change: &mut F, document: Fetched, described: &str) -> Result<(), Error>
+where
+    F: FnMut(Fetched) -> Result<(), Error>,
+{
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| on_change(document))).unwrap_or_else(
+        |_| {
+            Err(Error::remote(format!(
+                "{described}: the watch callback panicked; the watch is stopped"
+            )))
+        },
+    )
 }

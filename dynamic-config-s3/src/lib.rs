@@ -50,6 +50,13 @@
 //! ETag, which changes when the body does, so an unchanged configuration costs
 //! one small request and no transfer.
 //!
+//! # This crate needs a tokio runtime
+//!
+//! Not this crate's choice: the AWS SDK it is built on is tokio-based
+//! (`rt-tokio`), and [`watch`](S3::watch) sleeps on tokio's timer. Driving
+//! it from another executor panics inside the SDK. The etcd and NATS
+//! companions are executor-agnostic; this one is honest about not being.
+//!
 //! [`dynamic-config`]: https://docs.rs/dynamic-config
 
 #![forbid(unsafe_code)]
@@ -210,7 +217,7 @@ impl S3 {
                     if let Ok((document, current)) = self.read().await {
                         seen = current.or(Some(tag));
 
-                        on_change(document)?;
+                        guarded(&mut on_change, document, &self.describe())?;
                     }
                 }
 
@@ -312,7 +319,28 @@ async fn sleep_while(total: Duration, watching: &Watching) {
     let mut slept = Duration::ZERO;
 
     while slept < total && watching.keep_going() {
-        tokio::time::sleep(SLICE).await;
+        // `min`, so an interval below the slice sleeps what was asked, not a
+        // silently rounded-up quarter second.
+        tokio::time::sleep(SLICE.min(total - slept)).await;
         slept += SLICE;
     }
+}
+
+/// Runs the watch callback with a panic net.
+///
+/// The callback is the caller's code on the caller's thread; a panic in it
+/// used to unwind through the watch loop and kill that thread with the
+/// `RemoteWatch` handle still looking alive. Caught, it becomes an orderly
+/// error: the watch ends, and the caller is told why.
+fn guarded<F>(on_change: &mut F, document: Fetched, described: &str) -> Result<(), Error>
+where
+    F: FnMut(Fetched) -> Result<(), Error>,
+{
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| on_change(document))).unwrap_or_else(
+        |_| {
+            Err(Error::remote(format!(
+                "{described}: the watch callback panicked; the watch is stopped"
+            )))
+        },
+    )
 }

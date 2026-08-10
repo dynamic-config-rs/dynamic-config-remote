@@ -52,3 +52,8 @@ wildcards = "deny"
 [sources]
 unknown-registry = "deny"
 unknown-git = "deny"
+
+# `serde_yaml 0.9` is archived by its author (the version literally reads
+# `0.9.34+deprecated`). It stays for now: figment's own `yaml` feature pulls
+# it regardless, so switching our direct dependency would not remove it from
+# the tree — tracked as an issue until figment moves.

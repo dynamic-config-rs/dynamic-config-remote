@@ -35,11 +35,14 @@ use std::time::{Duration, Instant};
 
 use dynamic_config::Error;
 
-/// How close to expiry a token is refreshed rather than used.
+/// How close to expiry a token may get before it is refreshed.
 ///
-/// Long enough to cover a slow round trip and a little clock skew, short enough
-/// that a five-minute lease still gets used for most of its life.
-const RENEW_WITHIN: Duration = Duration::from_secs(30);
+/// One name and one value across the three token-caching store crates, on
+/// purpose. The margin is also the only cushion against clock skew: expiry
+/// is computed from a *local* `Instant` plus a *server-reported* TTL, so any
+/// disagreement between the server's issue time and our receipt time eats
+/// into it. A minute absorbs the skew a real fleet actually has.
+const REFRESH_WITHIN: Duration = Duration::from_secs(60);
 
 /// Where a Kubernetes service-account token is mounted, by convention.
 pub const SERVICE_ACCOUNT_TOKEN: &str = "/var/run/secrets/kubernetes.io/serviceaccount/token";
@@ -50,7 +53,7 @@ pub const SERVICE_ACCOUNT_TOKEN: &str = "/var/run/secrets/kubernetes.io/servicea
 /// its type by default — `approle` for AppRole, `kubernetes` for Kubernetes.
 /// Mounting the same method twice under different paths is ordinary Vault
 /// practice, which is why it is a parameter rather than a constant.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 #[non_exhaustive]
 pub enum Auth {
     /// A token somebody already obtained.
@@ -313,8 +316,59 @@ impl Auth {
     }
 }
 
+// Debug is hand-written for every type on this page that can hold a secret:
+// a derive prints payloads, and the payloads here are Vault tokens, AppRole
+// secret ids, passwords and JWTs. What IS printed — variant, mount, role,
+// username — is what a person debugging auth actually needs.
+impl std::fmt::Debug for Auth {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Token(_) => f.write_str("Token(***)"),
+            Self::AppRole { mount, role_id, .. } => f
+                .debug_struct("AppRole")
+                .field("mount", mount)
+                .field("role_id", role_id)
+                .finish_non_exhaustive(),
+            Self::Kubernetes {
+                mount,
+                role,
+                token_path,
+            } => f
+                .debug_struct("Kubernetes")
+                .field("mount", mount)
+                .field("role", role)
+                .field("token_path", token_path)
+                .finish(),
+            Self::Jwt { mount, role, .. } => f
+                .debug_struct("Jwt")
+                .field("mount", mount)
+                .field("role", role)
+                .finish_non_exhaustive(),
+            Self::Userpass {
+                mount, username, ..
+            } => f
+                .debug_struct("Userpass")
+                .field("mount", mount)
+                .field("username", username)
+                .finish_non_exhaustive(),
+            Self::Ldap {
+                mount, username, ..
+            } => f
+                .debug_struct("Ldap")
+                .field("mount", mount)
+                .field("username", username)
+                .finish_non_exhaustive(),
+            Self::Certificate { mount, name } => f
+                .debug_struct("Certificate")
+                .field("mount", mount)
+                .field("name", name)
+                .finish(),
+        }
+    }
+}
+
 /// A token, when it expires, and whether it can be renewed.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub(crate) struct Token {
     pub(crate) secret: String,
     /// `None` for a token with no lease — a root token, or one Vault called
@@ -339,8 +393,9 @@ impl Token {
 
     /// Whether this token should be refreshed before the next request.
     fn is_stale(&self) -> bool {
-        self.expires
-            .is_some_and(|expires| expires.saturating_duration_since(Instant::now()) < RENEW_WITHIN)
+        self.expires.is_some_and(|expires| {
+            expires.saturating_duration_since(Instant::now()) < REFRESH_WITHIN
+        })
     }
 
     fn renewable(&self) -> bool {
@@ -353,6 +408,16 @@ impl Token {
 /// A `Mutex` rather than a lock-free cell: logging in twice concurrently is
 /// harmless but wasteful, and this is on the once-per-refresh path rather than
 /// the once-per-request one.
+impl std::fmt::Debug for Token {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Token")
+            .field("secret", &"***")
+            .field("expires", &self.expires)
+            .field("renewable", &self.renewable)
+            .finish()
+    }
+}
+
 #[derive(Debug, Default)]
 pub(crate) struct Session {
     token: Mutex<Option<Token>>,
@@ -508,7 +573,7 @@ mod tests {
     #[test]
     fn a_token_near_its_expiry_is_stale() {
         let fresh = Token::new("t".to_owned(), Some(Duration::from_secs(3600)), true);
-        let expiring = Token::new("t".to_owned(), Some(RENEW_WITHIN / 2), true);
+        let expiring = Token::new("t".to_owned(), Some(REFRESH_WITHIN / 2), true);
 
         assert!(!fresh.is_stale());
         assert!(expiring.is_stale(), "it would expire mid-request");
@@ -576,7 +641,11 @@ mod tests {
         let expiring = || {
             logins.fetch_add(1, Ordering::SeqCst);
 
-            Ok(Token::new("first".to_owned(), Some(RENEW_WITHIN / 2), true))
+            Ok(Token::new(
+                "first".to_owned(),
+                Some(REFRESH_WITHIN / 2),
+                true,
+            ))
         };
         let renew = |secret: &str| {
             assert_eq!(secret, "first", "renewal presents the token it is renewing");
@@ -601,7 +670,13 @@ mod tests {
     fn a_failed_renewal_falls_back_to_logging_in_again() {
         let session = Session::new();
 
-        let login = || Ok(Token::new("fresh".to_owned(), Some(RENEW_WITHIN / 2), true));
+        let login = || {
+            Ok(Token::new(
+                "fresh".to_owned(),
+                Some(REFRESH_WITHIN / 2),
+                true,
+            ))
+        };
         let refuse = |_: &str| Err(Error::remote("the lease is gone"));
 
         assert_eq!(session.token(login, refuse).unwrap(), "fresh");
@@ -619,7 +694,7 @@ mod tests {
         let login = || {
             Ok(Token::new(
                 "fresh".to_owned(),
-                Some(RENEW_WITHIN / 2),
+                Some(REFRESH_WITHIN / 2),
                 false,
             ))
         };
