@@ -105,7 +105,8 @@ rather than accidents:
 - **A transport failure retries rather than ending the watch** — the store
   restarting is precisely what a watch is there to survive — with two named
   exceptions that end it with an error so a supervisor can restart it: an etcd
-  stream error no token refresh can cure, and a Redis subscription that died.
+  stream error no token refresh can cure (a refresh that works resumes from
+  the last delivered revision), and a Redis subscription that died.
   An error from *your* callback always ends it, so a caller that wants to
   survive a bad document should log it and return `Ok`.
 

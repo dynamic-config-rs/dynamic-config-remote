@@ -268,11 +268,11 @@ impl Etcd {
             ))
         })?;
 
-        let mut stream = match self.watch_once().await {
+        let mut stream = match self.watch_once(None).await {
             Err(error) if is_expired_token(&error) => {
                 self.refresh_token().await?;
 
-                self.watch_once().await?
+                self.watch_once(None).await?
             }
             outcome => outcome?,
         };
@@ -281,11 +281,18 @@ impl Etcd {
         // proves the refreshed token worked and resets the count.
         const MOST_TOKEN_RECOVERIES: u32 = 3;
         let mut token_recoveries = 0_u32;
+        // Where a re-established stream picks up: just past the last batch
+        // this loop was handed.
+        let mut resume_from: Option<i64> = None;
 
         loop {
             let response = match stream.message().await {
                 Ok(Some(response)) => {
                     token_recoveries = 0;
+
+                    if let Some(header) = response.header() {
+                        resume_from = Some(header.revision() + 1);
+                    }
 
                     response
                 }
@@ -299,9 +306,12 @@ impl Etcd {
                     // TTL, and a watch is long-lived by definition. Refresh
                     // and re-establish instead of handing the caller a
                     // terminal error for something the credentials can cure.
-                    // A brief gap is possible while the stream is down; the
-                    // next write still arrives, exactly as it would across
-                    // any reconnect.
+                    // The new stream resumes just past the last delivered
+                    // revision, so a write that lands while the stream is
+                    // down is replayed rather than lost; if that revision
+                    // has been compacted away meanwhile, etcd cancels the
+                    // resumed watch and the cancel branch below makes that a
+                    // clean error.
                     //
                     // Bounded twice over: a refresh that fails propagates,
                     // and a server that keeps *accepting* the login while
@@ -316,7 +326,7 @@ impl Etcd {
                         }
 
                         self.refresh_token().await?;
-                        stream = self.watch_once().await?;
+                        stream = self.watch_once(resume_from).await?;
 
                         continue;
                     }
@@ -397,11 +407,21 @@ impl Etcd {
     /// immediately. Holding it for the watch's lifetime would block every
     /// `fetch` on this source until the watch ended — which, for a watch, is
     /// never.
-    async fn watch_once(&self) -> Result<etcd_client::WatchStream, Error> {
+    async fn watch_once(
+        &self,
+        from_revision: Option<i64>,
+    ) -> Result<etcd_client::WatchStream, Error> {
+        // Resuming replays every event after the one last delivered, so a
+        // write that lands while the stream is down is caught up rather than
+        // lost. A fresh watch starts at the current revision instead — the
+        // startup contract is "changes only".
+        let options = from_revision
+            .map(|revision| etcd_client::WatchOptions::new().with_start_revision(revision));
+
         self.client
             .lock()
             .await
-            .watch(self.key.as_str(), None)
+            .watch(self.key.as_str(), options)
             .await
             .map_err(|error| Error::remote(format!("{}: cannot watch: {error}", self.describe())))
     }

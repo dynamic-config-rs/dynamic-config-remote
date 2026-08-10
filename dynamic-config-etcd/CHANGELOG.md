@@ -35,8 +35,11 @@ bumps the patch. A change to the minimum supported Rust version is breaking.
 ### Fixed
 
 - An expired auth token *during* the watch stream re-logs-in and
-  re-establishes the stream (bounded), instead of failing terminally —
-  previously only the initial connection recovered.
+  re-establishes the stream, instead of failing terminally — previously only
+  the initial connection recovered. The new stream resumes just past the
+  last delivered revision, so a write landing while the stream is down is
+  replayed rather than lost, and consecutive recoveries are capped so a
+  server that accepts logins while failing the stream cannot be hammered.
 
 ## [0.0.1] — 2026-08-10
 
