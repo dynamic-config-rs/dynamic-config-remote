@@ -1,0 +1,40 @@
+[package]
+name = "dynamic-config-redis"
+description = "Read dynamic-config configuration from a Redis key, with keyspace-notification watching."
+readme = "README.md"
+version.workspace = true
+edition.workspace = true
+# Higher than the core crate's 1.71: `redis 1.5` requires 1.88, measured against the
+# real toolchain rather than taken from a manifest. A companion pays for
+# what it pulls in.
+rust-version = "1.88"
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+documentation = "https://docs.rs/dynamic-config-redis"
+authors.workspace = true
+categories.workspace = true
+keywords.workspace = true
+exclude.workspace = true
+
+[features]
+# `rediss://` URLs need a TLS stack the client does not carry by default; a
+# `rediss://` URL without this feature fails at connect time with the client's
+# own "TLS support is not enabled" error.
+tls = ["redis/tls-rustls"]
+
+[dependencies]
+# Redis speaks a plain request/response protocol, so this implements the
+# blocking trait: no runtime needed to use it.
+dynamic-config = { workspace = true }
+redis = { version = "1.5", default-features = false }
+
+[dev-dependencies]
+dynamic-config = { workspace = true, features = ["json"] }
+testcontainers = { version = "0.27", features = ["blocking"] }
+testcontainers-modules = { version = "0.15", features = ["redis"] }
+serde = { version = "1.0.210", features = ["derive"] }
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]

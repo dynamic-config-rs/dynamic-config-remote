@@ -1,0 +1,43 @@
+[package]
+name = "dynamic-config-etcd"
+description = "Read dynamic-config configuration from an etcd v3 key/value store."
+readme = "README.md"
+version.workspace = true
+edition.workspace = true
+# Higher than the core crate's 1.71: a gRPC stack moves faster than this crate
+# wants to. The core stays where it is; a companion pays for what it pulls in.
+rust-version = "1.85"
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+documentation = "https://docs.rs/dynamic-config-etcd"
+authors.workspace = true
+categories.workspace = true
+keywords.workspace = true
+exclude.workspace = true
+
+[features]
+default = []
+# TLS to etcd, through `tonic`'s rustls. `tls-roots` also trusts the platform's
+# root store, which is what a public CA needs.
+tls = ["etcd-client/tls"]
+# `tls` too: roots without a TLS stack to hand them to would be a feature
+# that compiles and connects to nothing.
+tls-roots = ["tls", "etcd-client/tls-roots"]
+
+[dependencies]
+# etcd v3 speaks gRPC, so its client is async — which is why this crate
+# implements the async trait rather than the blocking one.
+dynamic-config = { workspace = true, features = ["async"] }
+etcd-client = "0.19"
+tokio = { version = "1.47", features = ["sync"] }
+
+[dev-dependencies]
+dynamic-config = { workspace = true, features = ["async", "json"] }
+testcontainers = "0.27"
+tokio = { version = "1.47", features = ["rt-multi-thread", "macros", "time"] }
+serde = { version = "1.0.210", features = ["derive"] }
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]

@@ -1,0 +1,10 @@
+# Normalise line endings so a Windows checkout does not rewrite every file and
+# then fail `cargo fmt --check` on CI for reasons nobody can see in a diff.
+* text=auto eol=lf
+
+# The compile-fail expectations are compared byte for byte, so they must never
+# be touched by an end-of-line conversion.
+*.stderr -text
+
+# Keep generated-looking files out of the diff view and out of language stats.
+Cargo.lock linguist-generated=true

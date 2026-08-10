@@ -1,0 +1,24 @@
+# Build output. The whole workspace shares one, so one rule covers ten crates.
+/target/
+
+# `cargo package` and `cargo publish` write here; the tarballs are artefacts of
+# a release, not part of one.
+**/*.crate
+
+# Backtraces and profiler output.
+*.profraw
+perf.data*
+flamegraph.svg
+
+# Editors and desktop environments. Kept short on purpose: a repository is not
+# the place to enumerate everybody's tools, and a global gitignore is.
+.vscode/
+.idea/
+*.swp
+.DS_Store
+
+# `cargo release` writes this while it works and removes it afterwards; a
+# leftover means a run was interrupted.
+Cargo.toml.orig
+
+/RELEASE-CHECKLIST.md

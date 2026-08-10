@@ -1,0 +1,54 @@
+[graph]
+all-features = true
+
+[advisories]
+yanked = "deny"
+# Exceptions are listed one at a time, with a reason, and never as a blanket
+# "ignore dev-dependencies": a vulnerability in something that runs on a
+# contributor's machine or in CI still matters.
+ignore = [
+    # `paste` is unmaintained rather than vulnerable — an informational
+    # advisory. It arrives through `actix-web`, which is a dev-dependency of
+    # one example, so it is in no build a user of this crate produces. Revisit
+    # if it ever becomes a vulnerability, or if actix drops it.
+    { id = "RUSTSEC-2024-0436", reason = "unmaintained, not vulnerable; dev-only, via actix-web in an example" },
+]
+# `time` is pinned in Cargo.lock to 0.3.47 or newer (RUSTSEC-2026-0009), which
+# declares rust-version 1.88. That is fine — it is reached only through the
+# companion crates and dev-dependencies, never through the core crate, whose
+# floor is 1.71. Regenerating the lockfile with
+# `resolver.incompatible-rust-versions = "fallback"` will silently drop it back
+# to 0.3.41 and reintroduce the advisory, so re-apply
+# `cargo update -p time --precise <patched>` afterwards.
+
+[licenses]
+# Permissive only. A copyleft dependency would leak into every user of a crate
+# that is meant to be uncontroversial to add.
+allow = [
+    "MIT",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Unicode-3.0",
+    "Zlib",
+    # Not copyleft, despite the name: a public-domain dedication, which is
+    # strictly more permissive than MIT. `notify` uses it.
+    "CC0-1.0",
+    # The Mozilla CA root store, as data. Permissive, and reached through every
+    # TLS stack in the companion crates.
+    "CDLA-Permissive-2.0",
+    # Permissive, OSI-approved, and no attribution requirement for binaries.
+    # Reached through `xxhash-rust`, which the Redis client uses for hashing.
+    "BSL-1.0",
+]
+confidence-threshold = 0.9
+
+[bans]
+multiple-versions = "warn"
+wildcards = "deny"
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"

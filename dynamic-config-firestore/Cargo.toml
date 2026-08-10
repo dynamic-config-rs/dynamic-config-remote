@@ -1,0 +1,33 @@
+[package]
+name = "dynamic-config-firestore"
+description = "Read dynamic-config configuration from a Google Cloud Firestore document."
+readme = "README.md"
+version.workspace = true
+edition.workspace = true
+# Higher than the core crate's 1.71: an HTTP client stack and a
+# container-driving test harness both move faster than this crate wants to.
+rust-version = "1.85"
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+documentation = "https://docs.rs/dynamic-config-firestore"
+authors.workspace = true
+categories.workspace = true
+keywords.workspace = true
+exclude.workspace = true
+
+[dependencies]
+# Firestore's REST API is plain HTTP, so this implements the blocking trait:
+# nothing here needs an async runtime, and neither does using it.
+dynamic-config = { workspace = true }
+ureq = { version = "3.0.12", default-features = false, features = ["rustls", "json"] }
+serde_json = "1.0.127"
+
+[dev-dependencies]
+dynamic-config = { workspace = true, features = ["json"] }
+testcontainers = { version = "0.27", features = ["blocking"] }
+serde = { version = "1.0.210", features = ["derive"] }
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]

@@ -1,0 +1,38 @@
+[package]
+name = "dynamic-config-nats"
+description = "Read dynamic-config configuration from a NATS JetStream key/value bucket."
+readme = "README.md"
+version.workspace = true
+edition.workspace = true
+# Higher than the core crate's 1.71: `async-nats 0.50` requires 1.88, measured against the
+# real toolchain rather than taken from a manifest. A companion pays for
+# what it pulls in.
+rust-version = "1.88"
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+documentation = "https://docs.rs/dynamic-config-nats"
+authors.workspace = true
+categories.workspace = true
+keywords.workspace = true
+exclude.workspace = true
+
+[dependencies]
+# NATS is a streaming protocol and its client is async throughout, so this
+# implements the async trait rather than the blocking one.
+dynamic-config = { workspace = true, features = ["async"] }
+async-nats = "0.50"
+# For `StreamExt::next` over the KV watch. Default features off: this needs the
+# stream adapters, not an executor.
+futures-util = { version = "0.3", default-features = false, features = ["std"] }
+
+[dev-dependencies]
+dynamic-config = { workspace = true, features = ["async", "json"] }
+testcontainers = "0.27"
+testcontainers-modules = { version = "0.15", features = ["nats"] }
+tokio = { version = "1.47", features = ["rt-multi-thread", "macros", "time"] }
+serde = { version = "1.0.210", features = ["derive"] }
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]

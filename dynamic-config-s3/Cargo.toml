@@ -1,0 +1,49 @@
+[package]
+name = "dynamic-config-s3"
+description = "Read dynamic-config configuration from an S3 object, on AWS or anything that speaks its API."
+readme = "README.md"
+version.workspace = true
+edition.workspace = true
+# Higher than the core crate's 1.71: `aws-sdk-sts` requires 1.88, measured against the
+# real toolchain rather than taken from a manifest. A companion pays for
+# what it pulls in.
+rust-version = "1.88"
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+documentation = "https://docs.rs/dynamic-config-s3"
+authors.workspace = true
+categories.workspace = true
+keywords.workspace = true
+exclude.workspace = true
+
+[dependencies]
+# The AWS SDK is async throughout, so this implements the async trait.
+dynamic-config = { workspace = true, features = ["async"] }
+# `default-features = false` plus an explicit HTTP client, so the TLS stack is
+# a choice rather than whatever the SDK defaults to this month.
+# The floors are where `default-https-client` first exists (aws-config 1.6,
+# aws-sdk-s3 1.79) — an older "1.5"/"1.60" resolved fine against a fresh
+# lockfile and broke minimal-versions resolution, which is the point of
+# declaring the number that is actually needed.
+aws-config = { version = "1.6", default-features = false, features = [
+    "behavior-version-latest",
+    "rt-tokio",
+    "default-https-client",
+] }
+aws-sdk-s3 = { version = "1.79", default-features = false, features = [
+    "rt-tokio",
+    "default-https-client",
+] }
+tokio = { version = "1.47", features = ["time"] }
+
+[dev-dependencies]
+dynamic-config = { workspace = true, features = ["async", "json"] }
+testcontainers = "0.27"
+testcontainers-modules = { version = "0.15", features = ["minio"] }
+tokio = { version = "1.47", features = ["rt-multi-thread", "macros", "time"] }
+serde = { version = "1.0.210", features = ["derive"] }
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
