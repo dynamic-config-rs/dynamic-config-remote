@@ -11,6 +11,7 @@
 use dynamic_config::{Format, RemoteSource};
 use dynamic_config_vault::Vault;
 use testcontainers::runners::SyncRunner;
+use testcontainers::ImageExt;
 use testcontainers_modules::hashicorp_vault::HashicorpVault;
 
 /// The dev-mode root token `testcontainers-modules` starts Vault with.
@@ -23,7 +24,11 @@ struct Running {
 
 /// Starts Vault and writes one KV v2 secret into it.
 fn vault_with(path: &str, secret: serde_json::Value) -> Running {
+    // Two minutes, not the default one: on a busy shared runner Vault's
+    // dev-mode startup occasionally crosses 60s, and a startup timeout there
+    // reads as a broken test rather than a slow neighbour.
     let container = HashicorpVault::default()
+        .with_startup_timeout(std::time::Duration::from_secs(120))
         .start()
         .expect("Docker should be available; these tests exercise a real Vault");
 
