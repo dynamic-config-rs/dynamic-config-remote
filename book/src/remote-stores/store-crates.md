@@ -29,8 +29,10 @@ checks it between requests; dropping the matching `RemoteWatch` stops it.
 
 ## The shared contract
 
-The last three columns are identical on purpose — they are decisions rather
-than accidents, and they hold across all seven crates:
+The startup-delivery and deleted-key columns are identical on purpose — they
+are decisions rather than accidents, and they hold across all seven crates.
+Transport failures retry too, except where the table names an error that ends
+the watch, deliberately, so a supervisor can restart it:
 
 - **The current value is not delivered at startup.** A watch reports changes;
   announcing the value the caller already has would make every restart look like
@@ -38,10 +40,11 @@ than accidents, and they hold across all seven crates:
 - **A deleted key is not a change.** No configuration is not a configuration,
   and neither replaying the last one nor pushing emptiness is better than
   leaving the running snapshot alone.
-- **A transport failure does not end the watch.** The store restarting is
-  precisely what a watch is there to survive; the loop backs off and retries.
-  Only an error from *your* callback ends it, so a caller that wants to survive
-  a bad document should log it and return `Ok`.
+- **A transport failure retries rather than ending the watch** — with the
+  table's named exceptions: an etcd stream error no token refresh can cure,
+  and a Redis subscription that died, both of which end the watch with an
+  error. An error from *your* callback always ends it, so a caller that wants
+  to survive a bad document should log it and return `Ok`.
 
 Credential handling is also uniform: logging in is lazy, expiry is handled both
 before and after a request (with exactly one retry), and a credential read from

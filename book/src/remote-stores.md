@@ -102,10 +102,12 @@ rather than accidents:
 - **A deleted key is not a change.** No configuration is not a configuration, and
   neither replaying the last one nor pushing emptiness is better than leaving the
   running snapshot alone.
-- **A transport failure does not end the watch.** The store restarting is
-  precisely what a watch is there to survive; the loop backs off and retries.
-  Only an error from *your* callback ends it, so a caller that wants to survive a
-  bad document should log it and return `Ok`.
+- **A transport failure retries rather than ending the watch** — the store
+  restarting is precisely what a watch is there to survive — with two named
+  exceptions that end it with an error so a supervisor can restart it: an etcd
+  stream error no token refresh can cure, and a Redis subscription that died.
+  An error from *your* callback always ends it, so a caller that wants to
+  survive a bad document should log it and return `Ok`.
 
 Cancellation splits along the same line the traits do. An async watch is a
 future: drop it. A blocking watch is a thread, which cannot be dropped from

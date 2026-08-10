@@ -277,9 +277,18 @@ impl Etcd {
             outcome => outcome?,
         };
 
+        // Consecutive is what matters: any successfully received message
+        // proves the refreshed token worked and resets the count.
+        const MOST_TOKEN_RECOVERIES: u32 = 3;
+        let mut token_recoveries = 0_u32;
+
         loop {
             let response = match stream.message().await {
-                Ok(Some(response)) => response,
+                Ok(Some(response)) => {
+                    token_recoveries = 0;
+
+                    response
+                }
                 Ok(None) => break,
                 Err(error) => {
                     let wrapped =
@@ -290,12 +299,22 @@ impl Etcd {
                     // TTL, and a watch is long-lived by definition. Refresh
                     // and re-establish instead of handing the caller a
                     // terminal error for something the credentials can cure.
-                    // Naturally bounded: a refresh that fails propagates, so
-                    // this cannot loop on a genuinely dead token. A brief gap
-                    // is possible while the stream is down; the next write
-                    // still arrives, exactly as it would across any
-                    // reconnect.
+                    // A brief gap is possible while the stream is down; the
+                    // next write still arrives, exactly as it would across
+                    // any reconnect.
+                    //
+                    // Bounded twice over: a refresh that fails propagates,
+                    // and a server that keeps *accepting* the login while
+                    // failing the stream — an auth-enabled proxy in front of
+                    // a member without auth, say — hits the recovery cap
+                    // instead of hammering the login endpoint forever.
                     if is_expired_token(&wrapped) {
+                        token_recoveries += 1;
+
+                        if token_recoveries > MOST_TOKEN_RECOVERIES {
+                            return Err(wrapped);
+                        }
+
                         self.refresh_token().await?;
                         stream = self.watch_once().await?;
 
