@@ -38,7 +38,8 @@ A manifest is a claim, not a measurement. `just msrv` runs every floor.
 **Check CI parity.** Any list that appears in more than one place drifts:
 the `--exclude` lists in ci.yml's parallel and serial test runs, the crate
 lists in the containers job, publish-dry-run, security.yml and the justfile,
-the MSRV matrix against the README's MSRV table. Diff them, don't skim them.
+the MSRV matrix against the MSRV tables (the book's, and README's summary).
+Diff them, don't skim them.
 
 **Audit the stacked `#[cfg]`s.** Two `#[cfg]` attributes on one item AND
 together — `#[cfg(unix)] #[cfg(not(unix))]` compiles to nothing, silently.
@@ -59,7 +60,9 @@ appears in documentation somewhere; recount whenever a list grows.
   small, easy to ship, and the first thing a reader hits.
 - Counts anywhere in the documentation — tests, examples, features, crates —
   match reality. Run the suite and count rather than trusting the last number.
-- The README's example output matches what the example prints. Run them.
+- The book's example output matches what the examples print. Run them.
+- `cargo test -p dynamic-config --test doc_surface` — the generated-method
+  list in the book and on the lib.rs front page against the macro's source.
 - Each companion crate's README is *its own*, not the workspace one.
 
 ## Release mechanics

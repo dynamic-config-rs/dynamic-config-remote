@@ -16,10 +16,11 @@ hits them.
    dependencies (`dep:` syntax), and *the `full` list*. `full` is documented
    as "all of the above"; a feature it misses makes that sentence a lie.
 2. **The two feature tables** — `dynamic-config/src/lib.rs`'s module docs and
-   the root README's "Cargo features" section. Same rows, same order.
+   the book's (`book/src/msrv-features.md`). Same rows, same order.
 3. **The MSRV story** — if the new dependency raises the floor, that is: a row
-   in ci.yml's `msrv` matrix, a line in `just msrv`, a row in the README's
-   MSRV table, and a note that MSRV is *measured* (`cargo check` against the
+   in ci.yml's `msrv` matrix, a line in `just msrv`, a row in the MSRV
+   tables (the book's, and the summary in `README.md`), and a note that MSRV
+   is *measured* (`cargo check` against the
    real toolchain, not the dependency's declared figure — `age` says 1.74 and
    needs 1.85).
 4. **cargo-hack** — nothing to add (`--feature-powerset` picks it up), but run
@@ -37,10 +38,10 @@ A `#[cfg(feature = "...")]` emitted by the proc macro is evaluated against the
 silently vanishes for everyone. The pattern that works:
 
 ```rust
-// in expand.rs — no cfg, just a call:
+// in expand/ — no cfg, just a call:
 ::dynamic_config::__the_method!(#args);
 
-// in dynamic-config/src/lib.rs — the cfg lives where the feature exists:
+// in dynamic-config/src/redirects.rs — the cfg lives where the feature exists:
 #[cfg(feature = "the-feature")]
 #[macro_export] #[doc(hidden)]
 macro_rules! __the_method { (...) => { pub fn the_method(...) {...} } }
@@ -66,5 +67,5 @@ just msrv                 # if the floor moved
 cargo doc -p dynamic-config --all-features   # doc_cfg badges render
 ```
 
-And recount: the lib.rs table, the README table and `[features]` must all
+And recount: the lib.rs table, the book's table and `[features]` must all
 have the same number of rows.

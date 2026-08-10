@@ -127,7 +127,7 @@ code is evaluated against the *user's* crate features, where the feature does
 not exist — the gated method silently vanishes for every user. Route it
 through a `#[macro_export] #[doc(hidden)]` redirect macro defined in the
 facade crate, where the `cfg` means what it says (see
-`__save_encrypted_method!` in `dynamic-config/src/lib.rs`, and the
+`__save_encrypted_method!` in `dynamic-config/src/redirects.rs`, and the
 add-cargo-feature skill).
 
 ## What a change must carry
@@ -137,8 +137,10 @@ add-cargo-feature skill).
   code says what. If you chose between two reasonable designs, the rejected one
   belongs in a comment or in the roadmap.
 - **Documentation** if a user would notice: a new macro argument goes in the
-  README's attribute table with a section of its own; a new feature goes in the
-  feature table, and in the MSRV table if it moves the floor.
+  book's attribute reference (`book/src/attribute-reference.md`) with a section
+  of its own; a new feature goes in the feature tables (lib.rs front page and
+  the book), and in the MSRV table if it moves the floor. A new generated
+  method that skips the book fails `tests/doc_surface.rs`.
 - **A `CHANGELOG.md` entry** under `Unreleased` — the workspace one, and the
   companion crate's own if that is what changed.
 
@@ -146,13 +148,13 @@ add-cargo-feature skill).
 
 | Looking for | Go to |
 |---|---|
-| what the crate does, and why each decision was made | `README.md` — it is the specification |
-| what is deliberately absent, and what would reopen it | `README.md`, under *Not planned* |
+| what the crate does, and why each decision was made | `book/src/` — the book is the specification; `README.md` is the storefront |
+| what is deliberately absent, and what would reopen it | `book/src/limitations.md` |
 | what might still be built | `ROADMAP.md` |
 | how a contributor gets started, and what every module does | `docs/CONTRIBUTOR-ONBOARDING.md` |
 | the properties that must hold, and what enforces them | `SECURITY.md` |
-| loading, merging, precedence | `dynamic-config/src/loader.rs` |
-| what the attribute expands to | `dynamic-config-macros/src/expand.rs` |
+| loading, merging, precedence | `dynamic-config/src/loader/` |
+| what the attribute expands to | `dynamic-config-macros/src/expand/` |
 | storage and reload hooks | `dynamic-config/src/cell.rs` |
 
 ## Style

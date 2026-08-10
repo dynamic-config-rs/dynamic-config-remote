@@ -26,8 +26,13 @@ just check              # what CI runs, in the order it fails fastest
 ```
 
 `scripts/` holds the flows around the checks — watching CI, promoting `dev`
-to `main`, tagging a release. Each says what it does; see
+to `main`, watching a release. Each says what it does; see
 [scripts/README.md](scripts/README.md).
+
+**Tests run on stable.** The MSRV toolchains (1.71 and friends) are
+*check-only*: dev-dependencies track stable, and `cargo test` on an MSRV
+toolchain fails inside the dev-dependency tree — that is expected, not a
+regression. `just msrv` does exactly what CI does: `cargo check` per floor.
 
 Or by hand:
 

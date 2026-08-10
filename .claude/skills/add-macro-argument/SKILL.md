@@ -20,7 +20,12 @@ missing any of them ships something half-wired.
   something else — `debounce` without `watch` is that; `diff` is not, because a
   reload has two triggers.
 
-## 2. Generate it — `dynamic-config-macros/src/expand.rs`
+## 2. Generate it — `dynamic-config-macros/src/expand/`
+
+`mod.rs` orchestrates; the methods themselves are built by the submodule that
+owns their theme (`accessors`, `watch`, `persistence`, `remote`, `schema`,
+`diagnostics`, `async_api`) and spliced back in a fixed order. Put the new
+code in the submodule it belongs to, not in `mod.rs`.
 
 Keep the generated code thin. Everything with behaviour belongs in
 `dynamic-config` as an ordinary function that can be linted, stepped through and
@@ -45,8 +50,11 @@ machine that uses the argument is worse than a build that will not start.
 
 ## 4. Document and pin it
 
-- `README.md`: a row in the at-a-glance table **and** a section of its own with
-  a runnable example.
+- The book: a row in `book/src/attribute-reference.md`'s at-a-glance table
+  **and** a section of its own with a runnable example, in the chapter the
+  argument belongs to. The thin table on the `dynamic_config` macro item in
+  `dynamic-config/src/lib.rs` gets the same row. A new *generated method*
+  that skips the book fails `tests/doc_surface.rs`.
 - A test that would fail without the argument.
 - A compile-fail case in `tests/ui/` if it has a diagnostic; `just bless`
   regenerates the expectation. A diagnostic that only exists when a feature is
