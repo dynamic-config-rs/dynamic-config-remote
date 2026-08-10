@@ -4,6 +4,12 @@ New here? [docs/CONTRIBUTOR-ONBOARDING.md](docs/CONTRIBUTOR-ONBOARDING.md) is a
 tour of every crate and module — what each does, why it is shaped that way, and
 where you would touch it. This file is the short version.
 
+## Branches
+
+Pull requests target **`dev`** (the default branch). `main` is production:
+nothing lands there except `dev` promotions that passed every gate, and
+releases are tags on it.
+
 ## Before code
 
 For anything larger than a fix, open an issue first. Not for permission — to
@@ -15,8 +21,13 @@ list of what exists, and more useful.
 ## Running everything
 
 ```sh
-just check          # what CI runs, in the order it fails fastest
+just check              # what CI runs, in the order it fails fastest
+./scripts/ci-local.sh   # the same, plus containers and MSRV — the whole gate
 ```
+
+`scripts/` holds the flows around the checks — watching CI, promoting `dev`
+to `main`, tagging a release. Each says what it does; see
+[scripts/README.md](scripts/README.md).
 
 Or by hand:
 
