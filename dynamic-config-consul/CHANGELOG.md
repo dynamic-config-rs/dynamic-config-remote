@@ -25,6 +25,19 @@ bumps the patch. A change to the minimum supported Rust version is breaking.
 
 ## [Unreleased]
 
+## [0.1.0] — 2026-08-10
+
+### Breaking
+
+- A watch callback that panics ends the watch with an error.
+- `Debug` no longer prints credentials (`Auth`, tokens, sessions redacted).
+
+### Changed
+
+- Token refresh margin unified at 60s (`REFRESH_WITHIN`) across the
+  token-caching store crates, with the clock-skew rationale documented.
+- `base64` 0.23.
+
 ## [0.0.1] — 2026-08-10
 
 Initial release.
@@ -42,5 +55,6 @@ Initial release.
 - `with_datacenter`, `with_timeout`, `with_wait`, `with_agent` for an HTTP
   client the program already has.
 
-[Unreleased]: https://github.com/ctolon/dynamic-config/compare/v0.0.1...HEAD
+[Unreleased]: https://github.com/ctolon/dynamic-config/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/ctolon/dynamic-config/compare/v0.0.1...v0.1.0
 [0.0.1]: https://github.com/ctolon/dynamic-config/releases/tag/v0.0.1

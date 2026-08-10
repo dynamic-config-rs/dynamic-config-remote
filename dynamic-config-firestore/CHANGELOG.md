@@ -25,6 +25,17 @@ bumps the patch. A change to the minimum supported Rust version is breaking.
 
 ## [Unreleased]
 
+## [0.1.0] — 2026-08-10
+
+### Breaking
+
+- `Debug` no longer prints credentials (access tokens redacted).
+- A watch callback that panics ends the watch with an error.
+
+### Changed
+
+- Token refresh margin documented (60s, `REFRESH_WITHIN`).
+
 ## [0.0.1] — 2026-08-10
 
 Initial release.
@@ -41,5 +52,6 @@ Initial release.
   emulator's nothing-at-all. A service-account JSON key is deliberately not
   supported.
 
-[Unreleased]: https://github.com/ctolon/dynamic-config/compare/v0.0.1...HEAD
+[Unreleased]: https://github.com/ctolon/dynamic-config/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/ctolon/dynamic-config/compare/v0.0.1...v0.1.0
 [0.0.1]: https://github.com/ctolon/dynamic-config/releases/tag/v0.0.1

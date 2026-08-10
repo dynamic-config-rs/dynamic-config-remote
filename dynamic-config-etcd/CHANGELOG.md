@@ -25,6 +25,19 @@ bumps the patch. A change to the minimum supported Rust version is breaking.
 
 ## [Unreleased]
 
+## [0.1.0] — 2026-08-10
+
+### Breaking
+
+- A watch callback that panics ends the watch with an error instead of
+  unwinding through the caller's task.
+
+### Fixed
+
+- An expired auth token *during* the watch stream re-logs-in and
+  re-establishes the stream (bounded), instead of failing terminally —
+  previously only the initial connection recovered.
+
 ## [0.0.1] — 2026-08-10
 
 Initial release.
@@ -38,5 +51,6 @@ Initial release.
   (re-exported), `from_client` for a client the program already has, and
   `tls` / `tls-roots` features.
 
-[Unreleased]: https://github.com/ctolon/dynamic-config/compare/v0.0.1...HEAD
+[Unreleased]: https://github.com/ctolon/dynamic-config/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/ctolon/dynamic-config/compare/v0.0.1...v0.1.0
 [0.0.1]: https://github.com/ctolon/dynamic-config/releases/tag/v0.0.1

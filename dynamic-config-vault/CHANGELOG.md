@@ -25,6 +25,18 @@ bumps the patch. A change to the minimum supported Rust version is breaking.
 
 ## [Unreleased]
 
+## [0.1.0] — 2026-08-10
+
+### Breaking
+
+- `Debug` no longer prints credentials (tokens, AppRole secret ids,
+  passwords, JWTs redacted; mounts/roles/usernames still shown).
+- A watch callback that panics ends the watch with an error.
+
+### Changed
+
+- Token refresh margin unified at 60s (`REFRESH_WITHIN`).
+
 ## [0.0.1] — 2026-08-10
 
 Initial release.
@@ -42,5 +54,6 @@ Initial release.
 - `with_namespace`, `with_timeout`, `with_agent`; one HTTP client per
   source, not per request.
 
-[Unreleased]: https://github.com/ctolon/dynamic-config/compare/v0.0.1...HEAD
+[Unreleased]: https://github.com/ctolon/dynamic-config/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/ctolon/dynamic-config/compare/v0.0.1...v0.1.0
 [0.0.1]: https://github.com/ctolon/dynamic-config/releases/tag/v0.0.1
