@@ -21,4 +21,9 @@ flamegraph.svg
 # leftover means a run was interrupted.
 Cargo.toml.orig
 
+# Every file in here is written by the tests themselves at run time — the
+# suites create the directory and their own fixtures, so a checkout carries
+# none of it and `cargo test` never dirties the tree.
+/dynamic-config/tests/scratch/
+
 /RELEASE-CHECKLIST.md
