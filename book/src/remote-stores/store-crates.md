@@ -11,7 +11,7 @@ for the streaming protocols; S3 is async but has no change stream, so it polls.
 
 | Crate | Store | Watches by | Worst case for noticing a stop | Startup delivery | Deleted key | Transport failure |
 |---|---|---|---|---|---|---|
-| [`dynamic-config-etcd`](https://github.com/ctolon/dynamic-config/tree/main/dynamic-config-etcd) | etcd v3 | a watch stream | immediate — the future is cancelled | not delivered; fetch first | not a change | backs off and retries |
+| [`dynamic-config-etcd`](https://github.com/ctolon/dynamic-config/tree/main/dynamic-config-etcd) | etcd v3 | a watch stream | immediate — the future is cancelled | not delivered; fetch first | not a change | an expired token re-authenticates and re-watches; other stream errors end the watch |
 | [`dynamic-config-nats`](https://github.com/ctolon/dynamic-config/tree/main/dynamic-config-nats) | NATS JetStream KV | a KV change stream | immediate — the future is cancelled | not delivered; fetch first | not a change | backs off and retries |
 | [`dynamic-config-s3`](https://github.com/ctolon/dynamic-config/tree/main/dynamic-config-s3) | S3, and anything speaking it | polling the ETag | a quarter second, whatever the poll interval is | not delivered; fetch first | not a change | backs off and retries |
 
@@ -23,7 +23,7 @@ checks it between requests; dropping the matching `RemoteWatch` stops it.
 | Crate | Store | Watches by | Worst case for noticing a stop | Startup delivery | Deleted key | Transport failure |
 |---|---|---|---|---|---|---|
 | [`dynamic-config-consul`](https://github.com/ctolon/dynamic-config/tree/main/dynamic-config-consul) | Consul KV | a blocking query | the blocking query's `wait`, one minute by default | not delivered; fetch first | not a change | backs off and retries |
-| [`dynamic-config-redis`](https://github.com/ctolon/dynamic-config/tree/main/dynamic-config-redis) | Redis | keyspace notifications | a quarter second, whatever the poll interval is | not delivered; fetch first | not a change | backs off and retries |
+| [`dynamic-config-redis`](https://github.com/ctolon/dynamic-config/tree/main/dynamic-config-redis) | Redis | keyspace notifications | a quarter second, whatever the poll interval is | not delivered; fetch first | not a change | fetch failures retry; a dead subscription ends the watch |
 | [`dynamic-config-vault`](https://github.com/ctolon/dynamic-config/tree/main/dynamic-config-vault) | Vault KV v2 | polling the version | a quarter second, whatever the poll interval is | not delivered; fetch first | not a change | backs off and retries |
 | [`dynamic-config-firestore`](https://github.com/ctolon/dynamic-config/tree/main/dynamic-config-firestore) | Firestore | polling `updateTime` | a quarter second, whatever the poll interval is | not delivered; fetch first | not a change | backs off and retries |
 

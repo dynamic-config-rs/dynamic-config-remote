@@ -22,7 +22,7 @@ dynamic-config-embedded    a separate `no_std` crate, sharing no code
 ```
 
 Read [README.md](README.md) before changing anything: it is the specification,
-not a summary. [Not planned](README.md#not-planned) lists what is deliberately
+not a summary. [Not planned](book/src/limitations.md#not-planned) lists what is deliberately
 *not* here and why; [ROADMAP.md](ROADMAP.md) lists what might still be. Check
 both before building something that was already decided.
 

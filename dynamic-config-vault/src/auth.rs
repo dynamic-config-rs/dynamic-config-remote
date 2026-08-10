@@ -403,11 +403,6 @@ impl Token {
     }
 }
 
-/// The current token for one source.
-///
-/// A `Mutex` rather than a lock-free cell: logging in twice concurrently is
-/// harmless but wasteful, and this is on the once-per-refresh path rather than
-/// the once-per-request one.
 impl std::fmt::Debug for Token {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Token")
@@ -418,6 +413,11 @@ impl std::fmt::Debug for Token {
     }
 }
 
+/// The current token for one source.
+///
+/// A `Mutex` rather than a lock-free cell: logging in twice concurrently is
+/// harmless but wasteful, and this is on the once-per-refresh path rather than
+/// the once-per-request one.
 #[derive(Debug, Default)]
 pub(crate) struct Session {
     token: Mutex<Option<Token>>,

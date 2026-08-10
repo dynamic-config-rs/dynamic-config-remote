@@ -14,7 +14,7 @@ releases are tags on it.
 
 For anything larger than a fix, open an issue first. Not for permission — to
 find out whether the thing has already been decided against, and why.
-[Not planned](README.md#not-planned) records what was refused and why, and
+[Not planned](book/src/limitations.md#not-planned) records what was refused and why, and
 [ROADMAP.md](ROADMAP.md) what might still be built. Both are shorter than a
 list of what exists, and more useful.
 

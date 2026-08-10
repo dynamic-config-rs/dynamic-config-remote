@@ -49,7 +49,7 @@ is defence in depth, not a claim about memory.
 
 **Encrypt what it writes.** `save` and the cache write plaintext. The cache's
 three modes exist so that is a choice rather than a surprise; see
-[the README](README.md#last-known-good).
+[the book](book/src/persistence.md#last-known-good).
 
 **Validate that a config file is trusted.** If an attacker can write your config
 file, they can configure your program. That is the file's permissions to
