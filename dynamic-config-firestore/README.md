@@ -72,7 +72,7 @@ which for a configuration document checked every thirty seconds is a rounding
 error against a project's quota.
 
 ```rust
-firestore.watch(&watching, Duration::from_secs(30), DbConfig::apply_remote)
+firestore.watch(&watching, Duration::from_secs(30), move |document| sink.apply(document))
 ```
 
 - The current document is **not** delivered at startup.

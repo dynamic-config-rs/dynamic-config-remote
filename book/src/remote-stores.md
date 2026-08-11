@@ -77,20 +77,25 @@ Polling on a timer works, and is what Vault, S3 and Firestore have to do — but
 etcd, NATS, Consul and Redis can say the moment a value moves. Each companion
 crate owns that loop, because a
 watch is long-lived and protocol-shaped in a way one trait cannot honestly
-cover; what they all push through is `apply_remote`:
+cover; what they all push through is a sink taken at wiring time:
 
 ```rust
 // etcd, NATS and S3: a future. Cancelled by dropping it, on any executor.
-tokio::spawn(async move { etcd.watch(DbConfig::apply_remote).await });
+let sink = DbConfig::remote_sink();
+tokio::spawn(async move { etcd.watch(move |doc| sink.apply(doc)).await });
 
 // Consul, Vault, Redis and Firestore: a thread, so it takes a stop token.
 let watch = RemoteWatch::new();
 let watching = watch.watching();
 
-std::thread::spawn(move || consul.watch(&watching, DbConfig::apply_remote));
+let sink = DbConfig::remote_sink();
+std::thread::spawn(move || consul.watch(&watching, move |doc| sink.apply(doc)));
 ```
 
-`apply_remote` is the sink, and it is the *same reload path a file edit takes* —
+`remote_sink()` is taken **once, where the loop starts** — it remembers which
+source was installed, and a sink whose source has since been replaced refuses
+to deliver, which also ends the stale loop: its refusal is a callback error.
+`apply` is the *same reload path a file edit takes* —
 validation, the reload hooks, the diff, the cache. A document that does not fit
 leaves the previous snapshot serving and returns the error, exactly as a bad
 file edit does.
@@ -166,7 +171,9 @@ because the credentials live in the client rather than in the source.
 
 ## Writing your own
 
-Implement one trait, return the document and its format:
+The full how-to — the watch loop and its conventions, credential refresh,
+what the tests must pin — is [its own chapter](remote-stores/writing-a-store.md).
+The short version: implement one trait, return the document and its format:
 
 ```rust
 impl RemoteSource for MyStore {

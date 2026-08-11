@@ -50,8 +50,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     DbConfig::refresh_remote()?;
 
     // No files: the fetched document is the whole configuration. Initializing
-    // through the builder is also what lets `apply_remote` reload later.
+    // through the builder is also what lets the sink from `remote_sink()` reload later.
     DbConfig::builder("db").env("APP_").init()?;
+
+    // The sink is taken here, at wiring: it remembers which source is
+    // installed, and a sink whose source is later replaced refuses to push.
+    let sink = DbConfig::remote_sink();
 
     println!("host = {}", DbConfig::current().host);
     println!("port = {}", DbConfig::current().port);
@@ -71,7 +75,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         watcher.watch(&watching, |document| {
             // An `on_reload` hook — with `changed_paths` for the keys that
             // moved — is where a real program would log this arriving.
-            DbConfig::apply_remote(document)
+            sink.apply(document)
         })
     });
 

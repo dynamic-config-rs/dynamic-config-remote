@@ -46,7 +46,7 @@ together — `#[cfg(unix)] #[cfg(not(unix))]` compiles to nothing, silently.
 Three tests here never ran for months because of one. Grep for consecutive
 cfg lines and read each pair.
 
-**Check the counts.** Twenty macro arguments, ten crates, fifteen ci.yml jobs,
+**Check the counts.** Twenty macro arguments, ten crates, sixteen ci.yml jobs,
 twelve changelogs, twenty-six core examples. Every one of those numbers
 appears in documentation somewhere; recount whenever a list grows.
 

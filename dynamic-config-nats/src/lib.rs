@@ -74,13 +74,10 @@
 //!
 //! ```no_run
 //! # use dynamic_config_nats::Nats;
-//! # struct DbConfig;
-//! # impl DbConfig {
-//! #     fn apply_remote(_: dynamic_config::Fetched) -> Result<(), dynamic_config::Error> { Ok(()) }
-//! # }
 //! # async fn example(nats: Nats) {
+//! # let sink = |_: dynamic_config::Fetched| -> Result<(), dynamic_config::Error> { Ok(()) };
 //! let task = tokio::spawn(async move {
-//!     nats.watch(DbConfig::apply_remote).await
+//!     nats.watch(move |document| sink(document)).await
 //! });
 //!
 //! // Dropping or aborting the task stops the watch.
@@ -266,13 +263,14 @@ impl Nats {
     /// ```no_run
     /// # use dynamic_config::AsyncRemoteSource;
     /// # use dynamic_config_nats::Nats;
-    /// # struct DbConfig;
-    /// # impl DbConfig {
-    /// #     fn apply_remote(_: dynamic_config::Fetched) -> Result<(), dynamic_config::Error> { Ok(()) }
+    /// # struct Sink;
+    /// # impl Sink {
+    /// #     fn apply(&self, _: dynamic_config::Fetched) -> Result<(), dynamic_config::Error> { Ok(()) }
     /// # }
     /// # async fn example(nats: Nats) -> Result<(), dynamic_config::Error> {
-    /// DbConfig::apply_remote(nats.fetch().await?)?;
-    /// nats.watch(DbConfig::apply_remote).await
+    /// # let sink = Sink;
+    /// sink.apply(nats.fetch().await?)?;
+    /// nats.watch(move |document| sink.apply(document)).await
     /// # }
     /// ```
     ///

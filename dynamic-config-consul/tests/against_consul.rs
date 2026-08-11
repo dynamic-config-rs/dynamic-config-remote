@@ -9,7 +9,6 @@
 
 use dynamic_config::{Format, RemoteSource};
 use dynamic_config_consul::Consul;
-use testcontainers::runners::SyncRunner;
 use testcontainers_modules::consul::Consul as ConsulImage;
 
 struct Running {
@@ -17,11 +16,39 @@ struct Running {
     _container: testcontainers::Container<ConsulImage>,
 }
 
+/// `start()`, retried once with a fresh container.
+///
+/// On a busy shared runner the first boot occasionally loses the scheduling
+/// lottery — `WaitContainer(StartupTimeout)` from a daemon that was going to
+/// be fine in ten more seconds. One fresh attempt separates a slow neighbour
+/// from an actual failure; failing twice is behaviour, and panics with both
+/// errors.
+fn start_resilient<I, R>(make: impl Fn() -> R) -> testcontainers::Container<I>
+where
+    I: testcontainers::Image,
+    R: testcontainers::runners::SyncRunner<I>,
+{
+    match make().start() {
+        Ok(container) => container,
+        Err(first) => {
+            eprintln!("container start failed ({first}); retrying once with a fresh container");
+            // Not immediately: the retry that follows a lost scheduling
+            // lottery without pausing is the attempt most likely to lose
+            // the same one.
+            std::thread::sleep(std::time::Duration::from_secs(2));
+            make().start().unwrap_or_else(|second| {
+                panic!(
+                    "the container failed to start twice; is Docker available? \
+                     first: {first}; then: {second}"
+                )
+            })
+        }
+    }
+}
+
 /// Starts Consul and writes one key into it.
 fn consul_with(key: &str, value: &str) -> Running {
-    let container = ConsulImage::default()
-        .start()
-        .expect("Docker should be available; these tests exercise a real Consul");
+    let container = start_resilient(ConsulImage::default);
 
     let port = container
         .get_host_port_ipv4(8500)
@@ -331,13 +358,12 @@ use dynamic_config_consul::Auth;
 fn secured_consul(key: &str, value: &str) -> Running {
     use testcontainers::ImageExt;
 
-    let container = ConsulImage::default()
-        .with_env_var(
+    let container = start_resilient(|| {
+        ConsulImage::default().with_env_var(
             "CONSUL_LOCAL_CONFIG",
             r#"{"acl":{"enabled":true,"default_policy":"deny","tokens":{"initial_management":"root-token"}}}"#,
         )
-        .start()
-        .expect("Docker should be available");
+    });
 
     let port = container
         .get_host_port_ipv4(8500)

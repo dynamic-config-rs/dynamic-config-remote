@@ -60,7 +60,7 @@ this subscribes to exactly that channel.
 let watch = RemoteWatch::new();
 let watching = watch.watching();
 
-std::thread::spawn(move || redis.watch(&watching, DbConfig::apply_remote));
+std::thread::spawn(move || redis.watch(&watching, move |document| sink.apply(document)));
 ```
 
 **Notifications are off by default in Redis.** A server that has not enabled

@@ -42,8 +42,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     DbConfig::refresh_remote()?;
 
     // No files: the fetched document is the whole configuration. Initializing
-    // through the builder is also what lets `apply_remote` reload later.
+    // through the builder is also what lets the sink from `remote_sink()` reload later.
     DbConfig::builder("db").env("APP_").init()?;
+
+    // The sink is taken here, at wiring: it remembers which source is
+    // installed, and a sink whose source is later replaced refuses to push.
+    let sink = DbConfig::remote_sink();
 
     println!("host = {}", DbConfig::current().host);
     println!("port = {}", DbConfig::current().port);
@@ -63,7 +67,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         // A watch that outlives its usefulness is stopped from outside;
         // a bad document should be logged and survived, not returned.
         watcher.watch(&watching, |document| {
-            DbConfig::apply_remote(document)
+            sink.apply(document)
                 .map_err(|error| {
                     eprintln!("a document did not apply: {error}");
                     error

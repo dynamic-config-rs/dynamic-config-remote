@@ -13,7 +13,6 @@ use std::time::Duration;
 
 use dynamic_config::{AsyncRemoteSource, Format, RemoteWatch};
 use dynamic_config_s3::{Client, S3};
-use testcontainers::runners::AsyncRunner;
 use testcontainers_modules::minio::MinIO;
 
 const BUCKET: &str = "config";
@@ -23,12 +22,39 @@ struct Running {
     _container: testcontainers::ContainerAsync<MinIO>,
 }
 
+/// `start()`, retried once with a fresh container.
+///
+/// On a busy shared runner the first boot occasionally loses the scheduling
+/// lottery — `WaitContainer(StartupTimeout)` from a daemon that was going to
+/// be fine in ten more seconds. One fresh attempt separates a slow neighbour
+/// from an actual failure; failing twice is behaviour, and panics with both
+/// errors.
+async fn start_resilient<I, R>(make: impl Fn() -> R) -> testcontainers::ContainerAsync<I>
+where
+    I: testcontainers::Image,
+    R: testcontainers::runners::AsyncRunner<I>,
+{
+    match make().start().await {
+        Ok(container) => container,
+        Err(first) => {
+            eprintln!("container start failed ({first}); retrying once with a fresh container");
+            // Not immediately: the retry that follows a lost scheduling
+            // lottery without pausing is the attempt most likely to lose
+            // the same one.
+            tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+            make().start().await.unwrap_or_else(|second| {
+                panic!(
+                    "the container failed to start twice; is Docker available? \
+                     first: {first}; then: {second}"
+                )
+            })
+        }
+    }
+}
+
 /// Starts MinIO, makes a bucket, and puts one object in it.
 async fn minio_with(key: &str, body: &str) -> Running {
-    let container = MinIO::default()
-        .start()
-        .await
-        .expect("Docker should be available; these tests exercise a real S3 API");
+    let container = start_resilient(MinIO::default).await;
 
     let port = container.get_host_port_ipv4(9000).await.unwrap();
     let endpoint = format!("http://127.0.0.1:{port}");

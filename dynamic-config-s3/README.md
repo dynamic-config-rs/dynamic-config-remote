@@ -64,7 +64,7 @@ small request and no transfer — which matters on a bucket that charges per
 gigabyte.
 
 ```rust
-s3.watch(&watching, Duration::from_secs(30), DbConfig::apply_remote).await
+s3.watch(&watching, Duration::from_secs(30), move |document| sink.apply(document)).await
 ```
 
 - The current object is **not** delivered at startup.

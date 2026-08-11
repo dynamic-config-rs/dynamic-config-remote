@@ -118,6 +118,17 @@ published on somebody else's timetable: a dependency that was clean on Monday is
 not necessarily clean on Friday, and nothing about this repository has to change
 for that to happen.
 
+GitHub's Dependabot alerts are a second feed with different coverage — GHSA
+advisories that RustSec has not picked up, and vice versa — so passing
+`cargo deny` does not close the security tab. The standing rule: **every open
+alert is triaged before a release ships.** Triaged means one of two outcomes,
+each visible afterwards: the lockfile moves to a patched version (with
+`--precise` when the MSRV-fallback resolver refuses the jump — the same
+mechanism `deny.toml` documents for `time`), or the alert is dismissed with a
+written reason stating why the vulnerable path is not reachable and what would
+reopen the question. An alert that is neither fixed nor argued away blocks the
+release.
+
 ## What a report gets you
 
 A fix, credit unless you would rather not have it, and a note in the changelog

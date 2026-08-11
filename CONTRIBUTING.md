@@ -6,9 +6,10 @@ where you would touch it. This file is the short version.
 
 ## Branches
 
-Pull requests target **`dev`** (the default branch). `main` is production:
-nothing lands there except `dev` promotions that passed every gate, and
-releases are tags on it.
+Pull requests target **`dev`**. `main` is the default branch — the one
+visitors land on — and it is production: nothing lands there except `dev`
+promotions that passed every gate (squash-merged, one commit per
+promotion), and releases are tags on it.
 
 ## Before code
 

@@ -82,7 +82,7 @@ than a poll with extra steps: the agent answers the moment the key moves.
 let watch = RemoteWatch::new();
 let watching = watch.watching();
 
-std::thread::spawn(move || consul.watch(&watching, DbConfig::apply_remote));
+std::thread::spawn(move || consul.watch(&watching, move |document| sink.apply(document)));
 
 // Dropping `watch` — or calling `watch.stop()` — ends the loop.
 ```

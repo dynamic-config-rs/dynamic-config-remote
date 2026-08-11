@@ -14,7 +14,6 @@ use std::time::Duration;
 use dynamic_config::{Format, RemoteSource, RemoteWatch};
 use dynamic_config_firestore::Firestore;
 use testcontainers::core::{IntoContainerPort, WaitFor};
-use testcontainers::runners::SyncRunner;
 use testcontainers::{GenericImage, ImageExt};
 
 const PROJECT: &str = "test-project";
@@ -24,24 +23,54 @@ struct Running {
     _container: testcontainers::Container<GenericImage>,
 }
 
+/// `start()`, retried once with a fresh container.
+///
+/// On a busy shared runner the first boot occasionally loses the scheduling
+/// lottery — `WaitContainer(StartupTimeout)` from a daemon that was going to
+/// be fine in ten more seconds. One fresh attempt separates a slow neighbour
+/// from an actual failure; failing twice is behaviour, and panics with both
+/// errors.
+fn start_resilient<I, R>(make: impl Fn() -> R) -> testcontainers::Container<I>
+where
+    I: testcontainers::Image,
+    R: testcontainers::runners::SyncRunner<I>,
+{
+    match make().start() {
+        Ok(container) => container,
+        Err(first) => {
+            eprintln!("container start failed ({first}); retrying once with a fresh container");
+            // Not immediately: the retry that follows a lost scheduling
+            // lottery without pausing is the attempt most likely to lose
+            // the same one.
+            std::thread::sleep(std::time::Duration::from_secs(2));
+            make().start().unwrap_or_else(|second| {
+                panic!(
+                    "the container failed to start twice; is Docker available? \
+                     first: {first}; then: {second}"
+                )
+            })
+        }
+    }
+}
+
 fn emulator() -> Running {
     // Google's own registry rather than Docker Hub: no anonymous pull limits,
     // which a test suite hits long before a person does.
-    let container = GenericImage::new(
-        "gcr.io/google.com/cloudsdktool/google-cloud-cli",
-        "emulators",
-    )
-    .with_exposed_port(8080.tcp())
-    .with_wait_for(WaitFor::message_on_stderr("Dev App Server is now running"))
-    .with_cmd([
-        "gcloud",
-        "emulators",
-        "firestore",
-        "start",
-        "--host-port=0.0.0.0:8080",
-    ])
-    .start()
-    .expect("Docker should be available; these tests exercise a real emulator");
+    let container = start_resilient(|| {
+        GenericImage::new(
+            "gcr.io/google.com/cloudsdktool/google-cloud-cli",
+            "emulators",
+        )
+        .with_exposed_port(8080.tcp())
+        .with_wait_for(WaitFor::message_on_stderr("Dev App Server is now running"))
+        .with_cmd([
+            "gcloud",
+            "emulators",
+            "firestore",
+            "start",
+            "--host-port=0.0.0.0:8080",
+        ])
+    });
 
     let port = container
         .get_host_port_ipv4(8080)

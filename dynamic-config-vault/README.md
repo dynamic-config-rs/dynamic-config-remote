@@ -107,7 +107,7 @@ let watch = RemoteWatch::new();
 let watching = watch.watching();
 
 std::thread::spawn(move || {
-    vault.watch(&watching, Duration::from_secs(30), DbConfig::apply_remote)
+    vault.watch(&watching, Duration::from_secs(30), move |document| sink.apply(document))
 });
 
 // Dropping `watch` — or calling `watch.stop()` — ends the loop.

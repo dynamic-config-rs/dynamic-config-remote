@@ -11,7 +11,6 @@
 use dynamic_config::{AsyncRemoteSource, Format};
 use dynamic_config_etcd::Etcd;
 use testcontainers::core::{IntoContainerPort, WaitFor};
-use testcontainers::runners::AsyncRunner;
 use testcontainers::{GenericImage, ImageExt};
 
 /// quay.io rather than Docker Hub: no pull limits, no anonymous rate limiting.
@@ -23,18 +22,48 @@ struct Running {
     _container: testcontainers::ContainerAsync<GenericImage>,
 }
 
+/// `start()`, retried once with a fresh container.
+///
+/// On a busy shared runner the first boot occasionally loses the scheduling
+/// lottery — `WaitContainer(StartupTimeout)` from a daemon that was going to
+/// be fine in ten more seconds. One fresh attempt separates a slow neighbour
+/// from an actual failure; failing twice is behaviour, and panics with both
+/// errors.
+async fn start_resilient<I, R>(make: impl Fn() -> R) -> testcontainers::ContainerAsync<I>
+where
+    I: testcontainers::Image,
+    R: testcontainers::runners::AsyncRunner<I>,
+{
+    match make().start().await {
+        Ok(container) => container,
+        Err(first) => {
+            eprintln!("container start failed ({first}); retrying once with a fresh container");
+            // Not immediately: the retry that follows a lost scheduling
+            // lottery without pausing is the attempt most likely to lose
+            // the same one.
+            tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+            make().start().await.unwrap_or_else(|second| {
+                panic!(
+                    "the container failed to start twice; is Docker available? \
+                     first: {first}; then: {second}"
+                )
+            })
+        }
+    }
+}
+
 async fn etcd_with(key: &str, value: &str) -> Running {
-    let container = GenericImage::new(IMAGE, TAG)
-        .with_exposed_port(2379.tcp())
-        .with_wait_for(WaitFor::message_on_stderr("ready to serve client requests"))
-        .with_cmd([
-            "etcd",
-            "--advertise-client-urls=http://0.0.0.0:2379",
-            "--listen-client-urls=http://0.0.0.0:2379",
-        ])
-        .start()
-        .await
-        .expect("Docker should be available; these tests exercise a real etcd");
+    let container = start_resilient(|| {
+        GenericImage::new(IMAGE, TAG)
+            .with_exposed_port(2379.tcp())
+            .with_wait_for(WaitFor::message_on_stderr("ready to serve client requests"))
+            .with_cmd([
+                "etcd",
+                "--advertise-client-urls=http://0.0.0.0:2379",
+                "--listen-client-urls=http://0.0.0.0:2379",
+            ])
+    })
+    .await;
 
     let port = container
         .get_host_port_ipv4(2379)
@@ -274,19 +303,19 @@ use dynamic_config_etcd::{Client, ConnectOptions};
 /// The auth token TTL is deliberately tiny: it is what makes the expiry path
 /// reachable in a test rather than after five minutes of waiting.
 async fn secured_etcd(key: &str, value: &str) -> Running {
-    let container = GenericImage::new(IMAGE, TAG)
-        .with_exposed_port(2379.tcp())
-        .with_wait_for(WaitFor::message_on_stderr("ready to serve client requests"))
-        .with_cmd([
-            "etcd",
-            "--advertise-client-urls=http://0.0.0.0:2379",
-            "--listen-client-urls=http://0.0.0.0:2379",
-            // `simple` tokens carry a TTL; `jwt` would not expire this way.
-            "--auth-token=simple,ttl=1s",
-        ])
-        .start()
-        .await
-        .expect("Docker should be available");
+    let container = start_resilient(|| {
+        GenericImage::new(IMAGE, TAG)
+            .with_exposed_port(2379.tcp())
+            .with_wait_for(WaitFor::message_on_stderr("ready to serve client requests"))
+            .with_cmd([
+                "etcd",
+                "--advertise-client-urls=http://0.0.0.0:2379",
+                "--listen-client-urls=http://0.0.0.0:2379",
+                // `simple` tokens carry a TTL; `jwt` would not expire this way.
+                "--auth-token=simple,ttl=1s",
+            ])
+    })
+    .await;
 
     let port = container.get_host_port_ipv4(2379).await.unwrap();
     let endpoint = format!("http://127.0.0.1:{port}");

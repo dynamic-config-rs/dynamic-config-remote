@@ -55,16 +55,17 @@
 //! # use dynamic_config::RemoteWatch;
 //! # use dynamic_config_vault::Vault;
 //! # use std::time::Duration;
-//! # struct DbConfig;
-//! # impl DbConfig {
-//! #     fn apply_remote(_: dynamic_config::Fetched) -> Result<(), dynamic_config::Error> { Ok(()) }
+//! # struct Sink;
+//! # impl Sink {
+//! #     fn apply(&self, _: dynamic_config::Fetched) -> Result<(), dynamic_config::Error> { Ok(()) }
 //! # }
 //! # fn example(vault: Vault) {
+//! # let sink = Sink;
 //! let watch = RemoteWatch::new();
 //! let watching = watch.watching();
 //!
 //! std::thread::spawn(move || {
-//!     vault.watch(&watching, Duration::from_secs(30), DbConfig::apply_remote)
+//!     vault.watch(&watching, Duration::from_secs(30), move |document| sink.apply(document))
 //! });
 //!
 //! // Dropping `watch` — or calling `watch.stop()` — ends the loop.
@@ -268,13 +269,14 @@ impl Vault {
     /// # use dynamic_config::{RemoteSource, RemoteWatch};
     /// # use dynamic_config_vault::Vault;
     /// # use std::time::Duration;
-    /// # struct DbConfig;
-    /// # impl DbConfig {
-    /// #     fn apply_remote(_: dynamic_config::Fetched) -> Result<(), dynamic_config::Error> { Ok(()) }
+    /// # struct Sink;
+    /// # impl Sink {
+    /// #     fn apply(&self, _: dynamic_config::Fetched) -> Result<(), dynamic_config::Error> { Ok(()) }
     /// # }
     /// # fn example(vault: Vault, watching: dynamic_config::Watching) -> Result<(), dynamic_config::Error> {
-    /// DbConfig::apply_remote(vault.fetch()?)?;
-    /// vault.watch(&watching, Duration::from_secs(30), DbConfig::apply_remote)
+    /// # let sink = Sink;
+    /// sink.apply(vault.fetch()?)?;
+    /// vault.watch(&watching, Duration::from_secs(30), move |document| sink.apply(document))
     /// # }
     /// ```
     ///

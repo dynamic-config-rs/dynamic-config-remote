@@ -46,15 +46,12 @@
 //! ```no_run
 //! # use dynamic_config::RemoteWatch;
 //! # use dynamic_config_consul::Consul;
-//! # struct DbConfig;
-//! # impl DbConfig {
-//! #     fn apply_remote(_: dynamic_config::Fetched) -> Result<(), dynamic_config::Error> { Ok(()) }
-//! # }
 //! # fn example(consul: Consul) {
+//! # let sink = |_: dynamic_config::Fetched| -> Result<(), dynamic_config::Error> { Ok(()) };
 //! let watch = RemoteWatch::new();
 //! let watching = watch.watching();
 //!
-//! std::thread::spawn(move || consul.watch(&watching, DbConfig::apply_remote));
+//! std::thread::spawn(move || consul.watch(&watching, move |document| sink(document)));
 //!
 //! // Dropping `watch` — or calling `watch.stop()` — ends the loop.
 //! # }
@@ -228,13 +225,14 @@ impl Consul {
     /// ```no_run
     /// # use dynamic_config::{RemoteSource, RemoteWatch};
     /// # use dynamic_config_consul::Consul;
-    /// # struct DbConfig;
-    /// # impl DbConfig {
-    /// #     fn apply_remote(_: dynamic_config::Fetched) -> Result<(), dynamic_config::Error> { Ok(()) }
+    /// # struct Sink;
+    /// # impl Sink {
+    /// #     fn apply(&self, _: dynamic_config::Fetched) -> Result<(), dynamic_config::Error> { Ok(()) }
     /// # }
     /// # fn example(consul: Consul, watching: dynamic_config::Watching) -> Result<(), dynamic_config::Error> {
-    /// DbConfig::apply_remote(consul.fetch()?)?;
-    /// consul.watch(&watching, DbConfig::apply_remote)
+    /// # let sink = Sink;
+    /// sink.apply(consul.fetch()?)?;
+    /// consul.watch(&watching, move |document| sink.apply(document))
     /// # }
     /// ```
     ///

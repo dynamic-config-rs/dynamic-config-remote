@@ -47,13 +47,10 @@
 //!
 //! ```no_run
 //! # use dynamic_config_etcd::Etcd;
-//! # struct DbConfig;
-//! # impl DbConfig {
-//! #     fn apply_remote(_: dynamic_config::Fetched) -> Result<(), dynamic_config::Error> { Ok(()) }
-//! # }
 //! # async fn example(etcd: Etcd) {
+//! # let sink = |_: dynamic_config::Fetched| -> Result<(), dynamic_config::Error> { Ok(()) };
 //! let task = tokio::spawn(async move {
-//!     etcd.watch(DbConfig::apply_remote).await
+//!     etcd.watch(move |document| sink(document)).await
 //! });
 //!
 //! // Dropping or aborting the task stops the watch.
@@ -228,13 +225,14 @@ impl Etcd {
     /// ```no_run
     /// # use dynamic_config::AsyncRemoteSource;
     /// # use dynamic_config_etcd::Etcd;
-    /// # struct DbConfig;
-    /// # impl DbConfig {
-    /// #     fn apply_remote(_: dynamic_config::Fetched) -> Result<(), dynamic_config::Error> { Ok(()) }
+    /// # struct Sink;
+    /// # impl Sink {
+    /// #     fn apply(&self, _: dynamic_config::Fetched) -> Result<(), dynamic_config::Error> { Ok(()) }
     /// # }
     /// # async fn example(etcd: Etcd) -> Result<(), dynamic_config::Error> {
-    /// DbConfig::apply_remote(etcd.fetch().await?)?;
-    /// etcd.watch(DbConfig::apply_remote).await
+    /// # let sink = Sink;
+    /// sink.apply(etcd.fetch().await?)?;
+    /// etcd.watch(move |document| sink.apply(document)).await
     /// # }
     /// ```
     ///

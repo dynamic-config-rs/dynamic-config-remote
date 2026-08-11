@@ -11,7 +11,6 @@
 use async_nats::jetstream::kv::Config;
 use dynamic_config::{AsyncRemoteSource, Format};
 use dynamic_config_nats::Nats;
-use testcontainers::runners::AsyncRunner;
 use testcontainers::ImageExt;
 use testcontainers_modules::nats::{Nats as NatsImage, NatsServerCmd};
 
@@ -23,15 +22,41 @@ struct Running {
     _container: testcontainers::ContainerAsync<NatsImage>,
 }
 
+/// `start()`, retried once with a fresh container.
+///
+/// On a busy shared runner the first boot occasionally loses the scheduling
+/// lottery — `WaitContainer(StartupTimeout)` from a daemon that was going to
+/// be fine in ten more seconds. One fresh attempt separates a slow neighbour
+/// from an actual failure; failing twice is behaviour, and panics with both
+/// errors.
+async fn start_resilient<I, R>(make: impl Fn() -> R) -> testcontainers::ContainerAsync<I>
+where
+    I: testcontainers::Image,
+    R: testcontainers::runners::AsyncRunner<I>,
+{
+    match make().start().await {
+        Ok(container) => container,
+        Err(first) => {
+            eprintln!("container start failed ({first}); retrying once with a fresh container");
+            // Not immediately: the retry that follows a lost scheduling
+            // lottery without pausing is the attempt most likely to lose
+            // the same one.
+            tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+            make().start().await.unwrap_or_else(|second| {
+                panic!(
+                    "the container failed to start twice; is Docker available? \
+                     first: {first}; then: {second}"
+                )
+            })
+        }
+    }
+}
+
 /// A server with a bucket, holding `key` if one is given.
 async fn nats_with(entry: Option<(&str, &str)>) -> Running {
     let command = NatsServerCmd::default().with_jetstream();
 
-    let container = NatsImage::default()
-        .with_cmd(&command)
-        .start()
-        .await
-        .expect("Docker should be available; these tests exercise a real NATS server");
+    let container = start_resilient(|| NatsImage::default().with_cmd(&command)).await;
 
     let port = container
         .get_host_port_ipv4(4222)
@@ -295,11 +320,7 @@ async fn a_user_and_password_authenticate() {
         .with_user("myapp")
         .with_password("hunter2");
 
-    let container = NatsImage::default()
-        .with_cmd(&command)
-        .start()
-        .await
-        .expect("Docker should be available");
+    let container = start_resilient(|| NatsImage::default().with_cmd(&command)).await;
 
     let port = container.get_host_port_ipv4(4222).await.unwrap();
     let server = format!("nats://127.0.0.1:{port}");

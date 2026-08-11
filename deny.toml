@@ -12,6 +12,16 @@ ignore = [
     # one example, so it is in no build a user of this crate produces. Revisit
     # if it ever becomes a vulnerability, or if actix drops it.
     { id = "RUSTSEC-2024-0436", reason = "unmaintained, not vulnerable; dev-only, via actix-web in an example" },
+    # Both `lru` advisories (an aliasing violation in `IterMut`, a
+    # panic-safety use-after-free in `pop()`) are fixed in versions the AWS
+    # SDK does not accept: `aws-sdk-s3` requires `^0.12.2`, so every consumer
+    # of the SDK — not just this workspace — carries lru 0.12 until Amazon
+    # moves. Reached only through `dynamic-config-s3`; neither code path
+    # (iter_mut, a panicking Hash/Eq during pop) occurs in the SDK's identity
+    # cache usage. Drop both the moment `cargo update -p lru` can reach the
+    # fixed versions.
+    { id = "RUSTSEC-2026-0002", reason = "fix is lru 0.16.3; aws-sdk-s3 pins ^0.12.2 — upstream-blocked, vulnerable path unused" },
+    { id = "RUSTSEC-2026-0253", reason = "fix is lru 0.18.2; aws-sdk-s3 pins ^0.12.2 — upstream-blocked, vulnerable path unused" },
 ]
 # `time` is pinned in Cargo.lock to 0.3.47 or newer (RUSTSEC-2026-0009), which
 # declares rust-version 1.88. That is fine — it is reached only through the

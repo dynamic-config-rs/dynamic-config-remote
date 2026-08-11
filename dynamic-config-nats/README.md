@@ -90,7 +90,7 @@ A KV bucket is a stream, so `watch` is a future the caller spawns and cancels by
 dropping — no runtime is imposed and no flag is polled.
 
 ```rust
-let task = tokio::spawn(async move { nats.watch(DbConfig::apply_remote).await });
+let task = tokio::spawn(async move { nats.watch(move |document| sink.apply(document)).await });
 
 // Dropping or aborting the task stops the watch.
 task.abort();

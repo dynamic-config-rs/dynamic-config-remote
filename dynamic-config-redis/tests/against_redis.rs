@@ -13,7 +13,6 @@ use std::time::Duration;
 use dynamic_config::{Format, RemoteSource, RemoteWatch};
 use dynamic_config_redis::Redis;
 use redis::Commands;
-use testcontainers::runners::SyncRunner;
 use testcontainers::ImageExt;
 use testcontainers_modules::redis::Redis as RedisImage;
 
@@ -27,12 +26,39 @@ struct Running {
     _container: testcontainers::Container<RedisImage>,
 }
 
+/// `start()`, retried once with a fresh container.
+///
+/// On a busy shared runner the first boot occasionally loses the scheduling
+/// lottery — `WaitContainer(StartupTimeout)` from a daemon that was going to
+/// be fine in ten more seconds. One fresh attempt separates a slow neighbour
+/// from an actual failure; failing twice is behaviour, and panics with both
+/// errors.
+fn start_resilient<I, R>(make: impl Fn() -> R) -> testcontainers::Container<I>
+where
+    I: testcontainers::Image,
+    R: testcontainers::runners::SyncRunner<I>,
+{
+    match make().start() {
+        Ok(container) => container,
+        Err(first) => {
+            eprintln!("container start failed ({first}); retrying once with a fresh container");
+            // Not immediately: the retry that follows a lost scheduling
+            // lottery without pausing is the attempt most likely to lose
+            // the same one.
+            std::thread::sleep(std::time::Duration::from_secs(2));
+            make().start().unwrap_or_else(|second| {
+                panic!(
+                    "the container failed to start twice; is Docker available? \
+                     first: {first}; then: {second}"
+                )
+            })
+        }
+    }
+}
+
 /// Starts Redis and writes one key into it.
 fn redis_with(key: &str, value: &str) -> Running {
-    let container = RedisImage::default()
-        .with_tag(TAG)
-        .start()
-        .expect("Docker should be available; these tests exercise a real Redis");
+    let container = start_resilient(|| RedisImage::default().with_tag(TAG));
 
     let port = container
         .get_host_port_ipv4(6379)

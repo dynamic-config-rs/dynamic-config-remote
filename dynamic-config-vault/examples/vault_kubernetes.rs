@@ -54,7 +54,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     DbConfig::refresh_remote()?;
 
     // No files: the fetched secret is the whole configuration. Initializing
-    // through the builder is also what lets `apply_remote` reload later.
+    // through the builder is also what lets the sink from `remote_sink()` reload later.
     let sources = DbConfig::builder("db").env("APP_");
     sources.init()?;
 
@@ -80,6 +80,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Reloaded, so the snapshot below is not still holding the override.
     sources.init()?;
 
+    // The sink is taken here, at wiring: it remembers which source is
+    // installed, and a sink whose source is later replaced refuses to push.
+    let sink = DbConfig::remote_sink();
+
     // ---------------------------------------------------------------------
     // Watching: metadata polling, so an unchanged secret is never read.
     // ---------------------------------------------------------------------
@@ -96,7 +100,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         source.watch(&watching, Duration::from_secs(1), |document| {
             println!("  a new version arrived");
 
-            DbConfig::apply_remote(document)
+            sink.apply(document)
         })
     });
 

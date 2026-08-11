@@ -10,7 +10,6 @@
 
 use dynamic_config::{Format, RemoteSource};
 use dynamic_config_vault::Vault;
-use testcontainers::runners::SyncRunner;
 use testcontainers::ImageExt;
 use testcontainers_modules::hashicorp_vault::HashicorpVault;
 
@@ -22,15 +21,44 @@ struct Running {
     _container: testcontainers::Container<HashicorpVault>,
 }
 
+/// `start()`, retried once with a fresh container.
+///
+/// On a busy shared runner the first boot occasionally loses the scheduling
+/// lottery — `WaitContainer(StartupTimeout)` from a daemon that was going to
+/// be fine in ten more seconds. One fresh attempt separates a slow neighbour
+/// from an actual failure; failing twice is behaviour, and panics with both
+/// errors.
+fn start_resilient<I, R>(make: impl Fn() -> R) -> testcontainers::Container<I>
+where
+    I: testcontainers::Image,
+    R: testcontainers::runners::SyncRunner<I>,
+{
+    match make().start() {
+        Ok(container) => container,
+        Err(first) => {
+            eprintln!("container start failed ({first}); retrying once with a fresh container");
+            // Not immediately: the retry that follows a lost scheduling
+            // lottery without pausing is the attempt most likely to lose
+            // the same one.
+            std::thread::sleep(std::time::Duration::from_secs(2));
+            make().start().unwrap_or_else(|second| {
+                panic!(
+                    "the container failed to start twice; is Docker available? \
+                     first: {first}; then: {second}"
+                )
+            })
+        }
+    }
+}
+
 /// Starts Vault and writes one KV v2 secret into it.
 fn vault_with(path: &str, secret: serde_json::Value) -> Running {
     // Two minutes, not the default one: on a busy shared runner Vault's
     // dev-mode startup occasionally crosses 60s, and a startup timeout there
     // reads as a broken test rather than a slow neighbour.
-    let container = HashicorpVault::default()
-        .with_startup_timeout(std::time::Duration::from_secs(120))
-        .start()
-        .expect("Docker should be available; these tests exercise a real Vault");
+    let container = start_resilient(|| {
+        HashicorpVault::default().with_startup_timeout(std::time::Duration::from_secs(120))
+    });
 
     let port = container
         .get_host_port_ipv4(8200)

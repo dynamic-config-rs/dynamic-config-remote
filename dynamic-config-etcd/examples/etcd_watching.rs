@@ -54,8 +54,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     DbConfig::refresh_remote_async().await?;
 
     // No files: the fetched document is the whole configuration. Initializing
-    // through the builder is also what lets `apply_remote` reload later.
+    // through the builder is also what lets the sink from `remote_sink()` reload later.
     DbConfig::builder("db").env("APP_").init_async().await?;
+
+    // The sink is taken here, at wiring: it remembers which source is
+    // installed, and a sink whose source is later replaced refuses to push.
+    let sink = DbConfig::remote_sink();
 
     println!("host = {}", DbConfig::current().host);
     println!("port = {}", DbConfig::current().port);
@@ -71,7 +75,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let task = tokio::spawn(async move {
         // Never returns `Ok`: a watch either runs or has failed, so the only
         // way out is an error — including the connection closing.
-        watcher.watch(DbConfig::apply_remote).await
+        watcher.watch(move |document| sink.apply(document)).await
     });
 
     // A task that also awaits reloads, to show the two halves side by side:

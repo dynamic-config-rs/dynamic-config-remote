@@ -53,8 +53,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     DbConfig::refresh_remote()?;
 
     // No files: the fetched secret is the whole configuration. Initializing
-    // through the builder is also what lets `apply_remote` reload later.
+    // through the builder is also what lets the sink from `remote_sink()` reload later.
     DbConfig::builder("db").env("APP_").init()?;
+
+    // The sink is taken here, at wiring: it remembers which source is
+    // installed, and a sink whose source is later replaced refuses to push.
+    let sink = DbConfig::remote_sink();
 
     println!("host = {}", DbConfig::current().host);
     println!("port = {}", DbConfig::current().port);
@@ -72,10 +76,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let watching = watch.watching();
 
     let thread = std::thread::spawn(move || {
-        // `apply_remote` is the same reload path a file edit takes:
+        // the sink from `remote_sink()` is the same reload path a file edit takes:
         // validation, the reload hooks, the cache. A document that does not
         // fit leaves the previous snapshot serving.
-        watcher.watch(&watching, Duration::from_secs(2), DbConfig::apply_remote)
+        watcher.watch(&watching, Duration::from_secs(2), move |document| {
+            sink.apply(document)
+        })
     });
 
     std::thread::sleep(Duration::from_secs(30));
