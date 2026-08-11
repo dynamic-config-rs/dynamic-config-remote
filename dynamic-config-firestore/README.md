@@ -83,7 +83,7 @@ firestore.watch(&watching, Duration::from_secs(30), DbConfig::apply_remote)
 
 | Method | Default |
 |---|---|
-| `with_key(..)` | `"db"` — must match the `key` in `#[dynamic_config]` |
+| `with_key(..)` | `"db"` — must match the key given to `builder(..)` |
 | `with_database(..)` | `(default)` |
 | `with_auth(..)` | `Auth::Emulator`, which sends nothing |
 | `with_endpoint(..)` | `https://firestore.googleapis.com` |

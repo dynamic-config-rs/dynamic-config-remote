@@ -23,9 +23,11 @@ several HTTP clients — into a build that never asked for them.
 
 ```rust
 DbConfig::set_remote(Consul::new("http://consul:8500", "myapp/db.json")?);
-
 DbConfig::refresh_remote()?;   // the network round trip, explicitly
-DbConfig::init()?;             // merges what came back; touches no network
+
+DbConfig::builder("db")
+    .file("config.toml")
+    .init()?;                  // merges what came back; touches no network
 ```
 
 ## Fetching is explicit

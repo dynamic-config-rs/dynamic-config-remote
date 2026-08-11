@@ -136,7 +136,7 @@ impl Firestore {
 
     /// The section key to wrap the document under.
     ///
-    /// Must match the `key` in the `#[dynamic_config]` attribute.
+    /// Must match the key the config type's `builder(..)` was given.
     #[must_use]
     pub fn with_key(mut self, key: impl Into<String>) -> Self {
         self.key = key.into();

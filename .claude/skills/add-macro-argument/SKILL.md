@@ -1,71 +1,84 @@
 ---
 name: add-macro-argument
-description: Use when adding an argument to the #[dynamic_config] attribute — covers parsing, the generated code, feature gating, compile-fail diagnostics, and the documentation an argument has to carry.
+description: Use when adding a configuration option to dynamic-config — options go on the runtime Builder and LoadSpec, not on the attribute, which takes no arguments. Covers the Builder method, the LoadSpec plumbing, feature gating, diagnostics, and the documentation an option has to carry.
 ---
 
-# Adding a `#[dynamic_config]` argument
+# Adding a `Builder` option
 
-The attribute has twenty arguments. Adding one touches four places, and
-missing any of them ships something half-wired.
+`#[dynamic_config]` takes **no arguments** — the attribute declares, the
+builder configures. A new way to state where configuration comes from is a
+new method on `Builder` plus a knob on `LoadSpec`. There is no parse step
+any more; do not add one. `dynamic-config-macros/src/args.rs` exists only to
+reject arguments with a migration map — the only reason to touch it is to
+extend that map.
 
-## 1. Parse it — `dynamic-config-macros/src/args.rs`
+Adding an option touches four places, and missing any of them ships
+something half-wired.
 
-- A field on `Raw` (`Option<Span>` for a flag, `Option<T>` for a value) and on
-  `Args`.
-- An arm in the `match`. `parse_string_array` consumes its own `=`; the
-  scalar parsers do not. Getting that wrong produces `expected \`=\``.
-- The argument's name in the "unknown argument" message. That list is a
-  compile-fail expectation, so it has to stay sorted the way it reads.
-- A validation rule *only* if the argument would silently do nothing without
-  something else — `debounce` without `watch` is that; `diff` is not, because a
-  reload has two triggers.
+## 1. The knob — `dynamic-config/src/source.rs`
 
-## 2. Generate it — `dynamic-config-macros/src/expand/`
+`LoadSpec` gets a field and a `with_*` method. `LoadSpec` is built with
+`with_*` methods rather than a struct literal precisely so a new knob does
+not break every call site at once.
 
-`mod.rs` orchestrates; the methods themselves are built by the submodule that
-owns their theme (`accessors`, `watch`, `persistence`, `remote`, `schema`,
-`diagnostics`, `async_api`) and spliced back in a fixed order. Put the new
-code in the submodule it belongs to, not in `mod.rs`.
+If the option is a new *layer*, `loader::build` in `loader/mod.rs` gets a
+merge in the right place, with a comment arguing for the position, and
+`origin_of` gets a way to recognise it — the precedence order lives in
+`loader/mod.rs` and nowhere else.
 
-Keep the generated code thin. Everything with behaviour belongs in
-`dynamic-config` as an ordinary function that can be linted, stepped through and
-unit tested; generated code can be none of those.
+## 2. The method — `dynamic-config/src/builder.rs`
 
-If the argument needs a `static`, use `slot(..)` — it handles the generic case
-(a registry keyed by `TypeId`) and the non-generic case (a plain `static`)
-together.
+A field on `Builder<T>` (mirror it in the manual `Clone`), a chainable
+method that takes and returns `self`, and a line in the private `with_spec`
+funnel that turns the field into the `LoadSpec` call. `with_spec` is the one
+place the builder meets the spec; an option wired anywhere else can drift.
+
+Builder methods are infallible by design — a missing file or an unsupported
+value is a load-time answer, not a construction-time one. If the option only
+makes sense with knowledge the generated `builder()` carries (secrets, field
+names, the installer), refuse it at `init` with an error that says to start
+from the generated `builder()` — the redacted cache modes are the pattern.
 
 ## 3. Gate it, if it needs a feature
 
-Two mechanisms, and the choice is forced:
-
-- **The signature names a feature-gated type** → an item-level redirect macro
-  (`__async_methods!`, `__clap_methods!`, `__schema_methods!`). A signature
-  cannot hide behind an expression-level `compile_error!`.
-- **Everything else** → an expression-level redirect (`__format_json!`,
-  `__source_encrypted!`, `__require_dotenv!`).
-
-The message names the feature to add. A silent runtime failure on the one
-machine that uses the argument is worse than a build that will not start.
+- **A runtime capability** (a format, `.env` parsing, decryption): compile
+  the implementation out behind the feature and make using it a *load-time*
+  error naming the feature to add — see `unsupported` in
+  `loader/sections.rs`. The paths are runtime data, so compile time cannot
+  see the problem.
+- **A generated method whose signature names a feature-gated type**: an
+  item-level redirect macro in `dynamic-config/src/redirects.rs`
+  (`__async_methods!`, `__clap_methods!`, `__async_remote_methods!` are the
+  three that exist). The `cfg` must live in the facade crate — one emitted
+  by the proc macro is evaluated against the user's features. See the
+  add-cargo-feature skill.
+- **A Builder method behind a feature** needs no redirect at all: `builder.rs`
+  is ordinary code, so a plain `#[cfg(feature = ..)]` on the `impl` block
+  works — `watch` and `schema` are the pattern.
 
 ## 4. Document and pin it
 
-- The book: a row in `book/src/attribute-reference.md`'s at-a-glance table
-  **and** a section of its own with a runnable example, in the chapter the
-  argument belongs to. The thin table on the `dynamic_config` macro item in
-  `dynamic-config/src/lib.rs` gets the same row. A new *generated method*
-  that skips the book fails `tests/doc_surface.rs`.
-- A test that would fail without the argument.
-- A compile-fail case in `tests/ui/` if it has a diagnostic; `just bless`
-  regenerates the expectation. A diagnostic that only exists when a feature is
-  *off* goes in `tests/ui-no-decrypt/` with its own `#[cfg(not(feature = ..))]`
-  test — a build with the feature on cannot see it.
+- The book: a row in the Builder tables in
+  `book/src/attribute-reference.md`, **and** a section of its own with a
+  runnable example in the chapter the option belongs to. The attribute has
+  no argument table any more; do not resurrect one.
+- If the option changes what the *attribute* generates, the generated method
+  must appear in the book's "What the attribute generates" table and the
+  lib.rs front-page table — `tests/doc_surface.rs` diffs both against the
+  macro source, in both directions.
+- A test that would fail without the option — builder tests live in
+  `dynamic-config/tests/builder.rs`.
+- A diagnostic's exact wording goes in `tests/ui/` with `just bless` if it
+  is a compile error, or an ordinary assertion if it is a load-time error —
+  and it must report paths and types, never values.
 - A `CHANGELOG.md` entry.
 
 ## The trap
 
-`where Self: SomeTrait` on an inherent method **does not work**: rustc rejects
-an inherent method whose bound a concrete `Self` does not meet, at the
-*definition* rather than at the call. That is why `save` and `schema` are
-arguments rather than methods everyone gets. If a new argument needs a trait the
-user derives, it has to be opt-in the same way.
+`where Self: SomeTrait` on an inherent method **does not work**: rustc
+rejects an inherent method whose bound a concrete `Self` does not meet, at
+the *definition* rather than at the call. That is why `schema()` lives on
+`Builder`'s own generic `impl` (which can state `T: JsonSchema`) and `save`
+is a free function over any `Serialize` value. An option that needs a trait
+the user derives belongs on the builder or as a free function, never as a
+generated inherent method.

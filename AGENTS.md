@@ -40,7 +40,7 @@ just bless        # regenerate compile-fail expectations after an intended chang
 
 There are skills in `.claude/skills/` for the four tasks that recur:
 [adding a remote store](.claude/skills/add-remote-store/SKILL.md),
-[adding a macro argument](.claude/skills/add-macro-argument/SKILL.md),
+[adding a Builder option](.claude/skills/add-macro-argument/SKILL.md),
 [adding a Cargo feature](.claude/skills/add-cargo-feature/SKILL.md), and
 [reviewing before a release](.claude/skills/review-for-release/SKILL.md). Read
 the relevant one before starting — each records decisions that are settled, so
@@ -84,11 +84,11 @@ toolchain finds.
 These are not hypothetical. Each one shipped, got caught, and cost a debugging
 session:
 
-**Tests that share state.** The macro takes *literal* paths, and layers,
-aliases and bindings live in `static`s. Two tests using the same config type,
-the same fixture path or the same environment variable will race — and pass
-alone, which is worse. **One type, one fixture, one variable per test.** Use a
-`macro_rules!` to declare them if that gets repetitive.
+**Tests that share state.** A config type's snapshot, layers, aliases and
+bindings live in `static`s keyed by the type. Two tests using the same config
+type, the same fixture path or the same environment variable will race — and
+pass alone, which is worse. **One type, one fixture, one variable per test.**
+Use a `macro_rules!` to declare them if that gets repetitive.
 
 **Silent string replacement.** When editing files programmatically, assert the
 anchor exists. A `replace` that matches nothing looks exactly like a successful
@@ -127,8 +127,8 @@ code is evaluated against the *user's* crate features, where the feature does
 not exist — the gated method silently vanishes for every user. Route it
 through a `#[macro_export] #[doc(hidden)]` redirect macro defined in the
 facade crate, where the `cfg` means what it says (see
-`__save_encrypted_method!` in `dynamic-config/src/redirects.rs`, and the
-add-cargo-feature skill).
+`__clap_methods!` and `__async_methods!` in
+`dynamic-config/src/redirects.rs`, and the add-cargo-feature skill).
 
 ## What a change must carry
 
@@ -136,11 +136,13 @@ add-cargo-feature skill).
 - **The reasoning, where it is not obvious.** Comments here explain *why*; the
   code says what. If you chose between two reasonable designs, the rejected one
   belongs in a comment or in the roadmap.
-- **Documentation** if a user would notice: a new macro argument goes in the
-  book's attribute reference (`book/src/attribute-reference.md`) with a section
-  of its own; a new feature goes in the feature tables (lib.rs front page and
-  the book), and in the MSRV table if it moves the floor. A new generated
-  method that skips the book fails `tests/doc_surface.rs`.
+- **Documentation** if a user would notice: a new `Builder` option goes in the
+  book's attribute reference (`book/src/attribute-reference.md`, the Builder
+  tables) and gets a section in the chapter it belongs to — the attribute
+  itself takes no arguments, so there is no argument table to extend; a new
+  feature goes in the feature tables (lib.rs front page and the book), and in
+  the MSRV table if it moves the floor. A new generated method that skips the
+  book fails `tests/doc_surface.rs`.
 - **A `CHANGELOG.md` entry** under `Unreleased` — the workspace one, and the
   companion crate's own if that is what changed.
 

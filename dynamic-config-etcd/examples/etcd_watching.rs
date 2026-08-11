@@ -16,7 +16,7 @@ use dynamic_config::{dynamic_config, AsyncRemoteSource};
 use dynamic_config_etcd::{ConnectOptions, Etcd};
 use serde::Deserialize;
 
-#[dynamic_config(files = [], key = "db", env = "APP_", async, diff)]
+#[dynamic_config]
 #[derive(Debug, Deserialize)]
 struct DbConfig {
     host: String,
@@ -52,7 +52,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     DbConfig::set_remote_async(reader);
     DbConfig::refresh_remote_async().await?;
-    DbConfig::init_async().await?;
+
+    // No files: the fetched document is the whole configuration. Initializing
+    // through the builder is also what lets `apply_remote` reload later.
+    DbConfig::builder("db").env("APP_").init_async().await?;
 
     println!("host = {}", DbConfig::current().host);
     println!("port = {}", DbConfig::current().port);

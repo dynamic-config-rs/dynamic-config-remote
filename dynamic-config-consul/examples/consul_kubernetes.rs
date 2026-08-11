@@ -17,7 +17,7 @@ use dynamic_config::{dynamic_config, RemoteSource, RemoteWatch};
 use dynamic_config_consul::{Auth, Consul};
 use serde::Deserialize;
 
-#[dynamic_config(files = [], key = "db", env = "APP_", diff)]
+#[dynamic_config]
 #[derive(Debug, Deserialize)]
 struct DbConfig {
     host: String,
@@ -48,7 +48,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     DbConfig::set_remote(reader);
     DbConfig::refresh_remote()?;
-    DbConfig::init()?;
+
+    // No files: the fetched document is the whole configuration. Initializing
+    // through the builder is also what lets `apply_remote` reload later.
+    DbConfig::builder("db").env("APP_").init()?;
 
     println!("host = {}", DbConfig::current().host);
     println!("port = {}", DbConfig::current().port);
@@ -66,8 +69,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let loop_handle = std::thread::spawn(move || {
         watcher.watch(&watching, |document| {
-            // `diff` on the config type is what turns this into a log line
-            // naming the keys that moved — paths only, never values.
+            // An `on_reload` hook — with `changed_paths` for the keys that
+            // moved — is where a real program would log this arriving.
             DbConfig::apply_remote(document)
         })
     });

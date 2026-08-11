@@ -7,11 +7,15 @@
 //! ```no_run
 //! use dynamic_config_vault::Vault;
 //!
+//! # struct DbConfigBuilder;
+//! # impl DbConfigBuilder {
+//! #     fn init(&self) -> Result<(), dynamic_config::Error> { Ok(()) }
+//! # }
 //! # struct DbConfig;
 //! # impl DbConfig {
 //! #     fn set_remote(_: Vault) {}
 //! #     fn refresh_remote() -> Result<(), dynamic_config::Error> { Ok(()) }
-//! #     fn init() -> Result<(), dynamic_config::Error> { Ok(()) }
+//! #     fn builder(_: &str) -> DbConfigBuilder { DbConfigBuilder }
 //! # }
 //! DbConfig::set_remote(
 //!     Vault::new("https://vault.internal:8200", "secret", "myapp/db")
@@ -20,7 +24,7 @@
 //!
 //! // Fetching is explicit; the load that follows touches no network.
 //! DbConfig::refresh_remote()?;
-//! DbConfig::init()?;
+//! DbConfig::builder("db").init()?;
 //! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
 //!
@@ -170,7 +174,7 @@ impl Vault {
 
     /// The section key to wrap the secret under.
     ///
-    /// Must match the `key` in the `#[dynamic_config]` attribute.
+    /// Must match the key the config type's `builder(..)` was given.
     #[must_use]
     pub fn with_key(mut self, key: impl Into<String>) -> Self {
         self.key = key.into();

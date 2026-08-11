@@ -18,7 +18,7 @@ DbConfig::set_remote(
 
 // Fetching is explicit; the load that follows touches no network.
 DbConfig::refresh_remote()?;
-DbConfig::init()?;
+DbConfig::builder("db").init()?;
 ```
 
 Vault's API is plain HTTP, so this implements the **blocking** `RemoteSource`
@@ -136,7 +136,7 @@ variant only tells Vault to log in with it.
 
 | Method | Default |
 |---|---|
-| `with_key(..)` | `"db"` — must match the `key` in `#[dynamic_config]` |
+| `with_key(..)` | `"db"` — must match the key given to `builder(..)` |
 | `with_auth(..)` / `with_token(..)` | none; the first read says so |
 | `with_namespace(..)` | none (Vault Enterprise) |
 | `with_timeout(..)` | 10 seconds |

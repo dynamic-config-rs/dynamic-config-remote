@@ -18,7 +18,7 @@ DbConfig::set_remote(
 
 // Fetching is explicit; the load that follows touches no network.
 DbConfig::refresh_remote()?;
-DbConfig::init()?;
+DbConfig::builder("db").init()?;
 ```
 
 Consul's KV API is plain HTTP, so this implements the **blocking**

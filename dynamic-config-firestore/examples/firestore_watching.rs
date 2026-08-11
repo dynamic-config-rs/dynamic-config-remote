@@ -26,7 +26,7 @@ use dynamic_config::{dynamic_config, RemoteSource, RemoteWatch};
 use dynamic_config_firestore::Firestore;
 use serde::Deserialize;
 
-#[dynamic_config(files = [], key = "db", env = "APP_", diff)]
+#[dynamic_config]
 #[derive(Debug, Deserialize)]
 struct DbConfig {
     host: String,
@@ -49,7 +49,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     DbConfig::set_remote(reader);
     DbConfig::refresh_remote()?;
-    DbConfig::init()?;
+
+    // No files: the fetched document is the whole configuration. Initializing
+    // through the builder is also what lets `apply_remote` reload later.
+    DbConfig::builder("db").env("APP_").init()?;
 
     println!("host = {}", DbConfig::current().host);
     println!("port = {}", DbConfig::current().port);

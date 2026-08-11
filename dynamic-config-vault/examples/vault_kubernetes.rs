@@ -23,7 +23,7 @@ use dynamic_config::{dynamic_config, RemoteSource, RemoteWatch};
 use dynamic_config_vault::{Auth, Vault};
 use serde::Deserialize;
 
-#[dynamic_config(files = [], key = "db", env = "APP_")]
+#[dynamic_config]
 #[derive(Deserialize)]
 struct DbConfig {
     host: String,
@@ -52,7 +52,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     DbConfig::set_remote(source);
 
     DbConfig::refresh_remote()?;
-    DbConfig::init()?;
+
+    // No files: the fetched secret is the whole configuration. Initializing
+    // through the builder is also what lets `apply_remote` reload later.
+    let sources = DbConfig::builder("db").env("APP_");
+    sources.init()?;
 
     let config = DbConfig::current();
 
@@ -67,14 +71,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // The environment still wins over the store, which is what makes a local
     // override possible without touching Vault.
     std::env::set_var("APP_DB_HOST", "localhost");
-    DbConfig::init()?;
+    sources.init()?;
     println!(
         "\nwith APP_DB_HOST set: host = {}",
         DbConfig::current().host
     );
     std::env::remove_var("APP_DB_HOST");
     // Reloaded, so the snapshot below is not still holding the override.
-    DbConfig::init()?;
+    sources.init()?;
 
     // ---------------------------------------------------------------------
     // Watching: metadata polling, so an unchanged secret is never read.

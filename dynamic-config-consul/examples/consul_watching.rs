@@ -19,7 +19,7 @@ use dynamic_config::{dynamic_config, RemoteSource, RemoteWatch};
 use dynamic_config_consul::Consul;
 use serde::Deserialize;
 
-#[dynamic_config(files = [], key = "db", env = "APP_", diff)]
+#[dynamic_config]
 #[derive(Debug, Deserialize)]
 struct DbConfig {
     host: String,
@@ -40,7 +40,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // explicitly loaded rather than waited for.
     DbConfig::set_remote(reader);
     DbConfig::refresh_remote()?;
-    DbConfig::init()?;
+
+    // No files: the fetched document is the whole configuration. Initializing
+    // through the builder is also what lets `apply_remote` reload later.
+    DbConfig::builder("db").env("APP_").init()?;
 
     println!("host = {}", DbConfig::current().host);
     println!("port = {}", DbConfig::current().port);
@@ -62,7 +65,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let thread = std::thread::spawn(move || {
         // `apply_remote` is the same reload path a file edit takes:
-        // validation, the reload hooks, the diff. A document that does not
+        // validation, the reload hooks, the cache. A document that does not
         // fit leaves the previous snapshot serving.
         watcher.watch(&watching, DbConfig::apply_remote)
     });

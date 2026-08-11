@@ -14,7 +14,7 @@ use dynamic_config_redis::Redis;
 DbConfig::set_remote(Redis::new("redis://redis.internal:6379", "myapp/db.json")?);
 
 DbConfig::refresh_remote()?;
-DbConfig::init()?;
+DbConfig::builder("db").init()?;
 ```
 
 Redis speaks a plain request/response protocol, so this implements the
