@@ -25,6 +25,12 @@ bumps the patch. A change to the minimum supported Rust version is breaking.
 
 ## [Unreleased]
 
+### Changed
+
+- Released in lockstep with `dynamic-config` 0.2.0, where the attribute
+  declares and the builder configures. This crate's own surface is
+  unchanged; its examples and docs now configure through the builder.
+
 ## [0.1.0] — 2026-08-10
 
 ### Breaking

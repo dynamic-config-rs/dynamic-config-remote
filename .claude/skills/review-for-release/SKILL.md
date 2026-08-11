@@ -47,7 +47,7 @@ Three tests here never ran for months because of one. Grep for consecutive
 cfg lines and read each pair.
 
 **Check the counts.** Twenty macro arguments, ten crates, fifteen ci.yml jobs,
-eleven changelogs, twenty-six core examples. Every one of those numbers
+twelve changelogs, twenty-six core examples. Every one of those numbers
 appears in documentation somewhere; recount whenever a list grows.
 
 **`cargo clippy -- -W clippy::pedantic`** for the substantive lints only:

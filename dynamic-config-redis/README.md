@@ -4,8 +4,8 @@ Read [`dynamic-config`] configuration from a Redis key.
 
 ```toml
 [dependencies]
-dynamic-config = "0.0.1"
-dynamic-config-redis = "0.0.1"
+dynamic-config = "0.2.0"
+dynamic-config-redis = "0.2.0"
 ```
 
 ```rust

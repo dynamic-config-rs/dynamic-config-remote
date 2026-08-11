@@ -4,8 +4,8 @@ Read [`dynamic-config`] configuration from Consul's key/value store.
 
 ```toml
 [dependencies]
-dynamic-config = "0.0.1"
-dynamic-config-consul = "0.0.1"
+dynamic-config = "0.2.0"
+dynamic-config-consul = "0.2.0"
 ```
 
 ```rust

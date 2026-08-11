@@ -4,8 +4,8 @@ Read [`dynamic-config`] configuration from an etcd v3 key/value store.
 
 ```toml
 [dependencies]
-dynamic-config = { version = "0.0.1", features = ["async"] }
-dynamic-config-etcd = "0.0.1"
+dynamic-config = { version = "0.2.0", features = ["async"] }
+dynamic-config-etcd = "0.2.0"
 ```
 
 ```rust
