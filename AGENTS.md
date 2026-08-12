@@ -6,6 +6,14 @@ things an agent gets wrong made explicit.
 
 ## Orientation
 
+Ten crates in one workspace, one version, published together — and every
+README's install snippet names that version, the root's and the nine
+companions' alike. The pre-release hook rewrites them all to the number
+being cut (`scripts/sync-readme-versions.sh`), and `doc_surface.rs`'s
+`the_readmes_agree_on_one_version` fails the gate if one is ever left
+behind anyway. The book never carries the number at all —
+its snippets say `<version>`.
+
 Ten crates in one workspace, one version, published together:
 
 ```text

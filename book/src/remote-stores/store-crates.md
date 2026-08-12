@@ -2,7 +2,9 @@
 
 One row per store, with the contract columns that differ between them. The
 prose behind every column is in [Remote Stores](../remote-stores.md); each
-crate's own README has the whole story for that store.
+store also has its own chapter here — [etcd](etcd.md), [Consul](consul.md),
+[NATS](nats.md), [Redis](redis.md), [Vault](vault.md), [S3](s3.md),
+[Firestore](firestore.md) — and its README has the whole story.
 
 ## The async family — a watch is a future
 
