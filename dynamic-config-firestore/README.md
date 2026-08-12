@@ -4,8 +4,8 @@ Read [`dynamic-config`] configuration from a Google Cloud Firestore document.
 
 ```toml
 [dependencies]
-dynamic-config = "0.4.0"
-dynamic-config-firestore = "0.4.0"
+dynamic-config = "0.5.0"
+dynamic-config-firestore = "0.5.0"
 ```
 
 ```rust

@@ -27,3 +27,42 @@ Cargo.toml.orig
 /dynamic-config/tests/scratch/
 
 /RELEASE-CHECKLIST.md
+
+# The Python extension's build and tool output. The wheel and the compiled
+# module are built by maturin (into `target/` and, for an editable install,
+# next to the package); the caches and environments belong to whoever ran
+# the tools, not to the repository.
+
+# Build artefacts
+dist/
+build/
+wheels/
+*.egg-info/
+*.egg
+# The compiled extension, wherever an editable install drops it.
+*.so
+*.pyd
+*.dylib
+*.py[cod]
+**/__pycache__/
+
+# Virtual environments. Named every way people name them, because a
+# checkout should not care which one you chose.
+.venv/
+venv/
+env/
+.env/
+ENV/
+
+# Tool caches and reports
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+.tox/
+.nox/
+.hypothesis/
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+.benchmarks/

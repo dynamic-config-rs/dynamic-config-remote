@@ -18,7 +18,17 @@
       "Bash(rustup:*)",
       "Bash(just:*)",
       "Bash(docker pull:*)",
-      "Bash(docker ps:*)"
+      "Bash(docker ps:*)",
+      "Bash(maturin:*)",
+      "Bash(python -m pytest:*)",
+      "Bash(python -m mypy:*)",
+      "Bash(mypy:*)",
+      "Bash(pytest:*)",
+      "Bash(vermin:*)",
+      "Bash(python examples/:*)",
+      "Bash(pip install:*)",
+      "Bash(pip show:*)",
+      "Bash(python -m venv:*)"
     ],
     "deny": [
       "Bash(cargo publish:*)",
@@ -26,7 +36,23 @@
       "Bash(git push:*)",
       "Read(./**/*.creds)",
       "Read(./**/key.txt)",
-      "Read(./**/.env)"
+      "Read(./**/.env)",
+      "Bash(maturin upload:*)",
+      "Bash(maturin publish:*)",
+      "Bash(twine:*)"
+    ]
+  },
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write|MultiEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "$CLAUDE_PROJECT_DIR/.claude/hooks/binding-drift.sh"
+          }
+        ]
+      }
     ]
   }
 }

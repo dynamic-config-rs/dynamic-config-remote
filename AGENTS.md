@@ -14,7 +14,8 @@ being cut (`scripts/sync-readme-versions.sh`), and `doc_surface.rs`'s
 behind anyway. The book never carries the number at all —
 its snippets say `<version>`.
 
-Ten crates in one workspace, one version, published together:
+Twelve crates in one workspace, one version, published together — ten to
+crates.io, one to PyPI, one to neither:
 
 ```text
 dynamic-config-macros      the proc macro; no stable API of its own
@@ -27,6 +28,9 @@ dynamic-config-vault        |
 dynamic-config-s3           |
 dynamic-config-firestore   /
 dynamic-config-embedded    a separate `no_std` crate, sharing no code
+dynamic-config-cli         the `explain`/`diff` binary
+dynamic-config-python      a PyO3 extension; ships to PyPI, never to crates.io
+                           (no dependencies — Pydantic is an extra)
 ```
 
 Read [README.md](README.md) before changing anything: it is the specification,
@@ -46,13 +50,26 @@ just hack         # every pairwise feature combination compiles
 just bless        # regenerate compile-fail expectations after an intended change
 ```
 
-There are skills in `.claude/skills/` for the four tasks that recur:
+There are skills in `.claude/skills/` for the tasks that recur:
 [adding a remote store](.claude/skills/add-remote-store/SKILL.md),
 [adding a Builder option](.claude/skills/add-macro-argument/SKILL.md),
-[adding a Cargo feature](.claude/skills/add-cargo-feature/SKILL.md), and
+[adding a Cargo feature](.claude/skills/add-cargo-feature/SKILL.md),
+[changing the Python bindings](.claude/skills/change-python-bindings/SKILL.md),
+[triaging the security tab](.claude/skills/triage-security/SKILL.md), and
 [reviewing before a release](.claude/skills/review-for-release/SKILL.md). Read
 the relevant one before starting — each records decisions that are settled, so
 you do not spend the turn re-deriving them.
+
+There is one subagent, in `.claude/agents/`:
+[`python-binding-reviewer`](.claude/agents/python-binding-reviewer.md), for
+reviewing a change against the binding's invariants — the ones whose failures
+are silent, like validation moving after the install or a read crossing back
+into Rust.
+
+`.claude/hooks/binding-drift.sh` runs after every edit and names the files a
+change has to travel to. It is advisory: two surfaces here mirror each other
+with nothing to enforce it, and a stale stub only fails under
+`mypy --strict` while a stale API reference fails nowhere at all.
 
 Never claim a change works without running `just check`. If Docker is
 unavailable, say so rather than skipping `just containers` silently.
@@ -154,6 +171,32 @@ facade crate, where the `cfg` means what it says (see
 - **A `CHANGELOG.md` entry** under `Unreleased` — the workspace one, and the
   companion crate's own if that is what changed.
 
+### If the change touches Python
+
+`dynamic-config-python` is two halves that mirror each other, and neither the
+compiler nor `cargo test` notices when one moves alone. A change to the
+compiled surface has to reach the facade (with a docstring — the package is
+fully documented, `help()` is its manual, and ruff's `pydocstyle` fails the
+gate without one), `_core.pyi`, `book/src/python/reference.md` and the
+pytest suite. The facade is one concern per file — `_config`, `_schema`,
+`_settings`, `_lifetime`, `_diagnostics`, `_decorator`, `_errors`,
+`_executor` — with `__init__.py` as the public surface and nothing else.
+Its gate is `just python`, not `just check`: an extension module links no
+libpython, so `cargo test --workspace` excludes it deliberately.
+
+Its version moves on its own — it is excluded from `cargo release`, because
+the wheel embeds the engine rather than depending on a published version of
+it. Bump it when the Python package changes, not when the crates do.
+
+Two rules there have already cost something. The secret list is derived from
+the model under **every** name a file could use — the field name and each
+alias shape Pydantic accepts — because picking one per field leaked the value
+into `explain` and into the redacted cache on disk. And a
+`pydantic_settings.BaseSettings` class declares sources this engine does not
+run: `DynamicConfig` warns about them and `from_settings` translates them, so
+a new source option should ask whether pydantic-settings has a spelling for
+it.
+
 ## Where things live
 
 | Looking for | Go to |
@@ -166,6 +209,8 @@ facade crate, where the `cfg` means what it says (see
 | loading, merging, precedence | `dynamic-config/src/loader/` |
 | what the attribute expands to | `dynamic-config-macros/src/expand/` |
 | storage and reload hooks | `dynamic-config/src/cell.rs` |
+| the Python bindings, inside | `book/src/python/internals.md`, then `dynamic-config-python/src/` |
+| what Python deliberately does not do | `book/src/python/limitations.md` |
 
 ## Style
 
