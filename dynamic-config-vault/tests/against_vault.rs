@@ -9,7 +9,7 @@
 //! test nobody notices has stopped running.
 
 use dynamic_config::{Format, RemoteSource};
-use dynamic_config_vault::Vault;
+use dynamic_config_vault::{Keys, Vault};
 use testcontainers::ImageExt;
 use testcontainers_modules::hashicorp_vault::HashicorpVault;
 
@@ -142,7 +142,7 @@ fn the_document_loads_into_a_struct() {
 }
 
 #[test]
-fn a_wrong_token_is_a_remote_error_not_a_panic() {
+fn a_wrong_token_is_an_auth_error_not_a_panic() {
     let vault = vault_with("myapp/guarded", serde_json::json!({ "host": "x" }));
 
     let source = Vault::new(&vault.address, "secret", "myapp/guarded")
@@ -151,7 +151,10 @@ fn a_wrong_token_is_a_remote_error_not_a_panic() {
 
     let error = source.fetch().expect_err("the token is wrong");
 
-    assert_eq!(error.kind(), dynamic_config::ErrorKind::Remote);
+    // `Auth`, not `Remote`: Vault answered, and what it said was no. Waiting
+    // does not make a wrong token right, so a watch loop should stop rather
+    // than back off.
+    assert_eq!(error.kind(), dynamic_config::ErrorKind::Auth);
     // `describe()` now leads with the address, so the mount is preceded by
     // it rather than by the word "vault" directly.
     assert!(
@@ -159,6 +162,60 @@ fn a_wrong_token_is_a_remote_error_not_a_panic() {
         "{error}"
     );
     assert!(error.to_string().contains(&vault.address), "{error}");
+}
+
+/// Several paths, one section: the shape Vault's per-path policies produce —
+/// a shared secret and a restricted one — merged in call order.
+#[test]
+fn several_paths_merge_into_one_section_and_the_later_path_wins() {
+    let vault = vault_with(
+        "myapp/db-defaults",
+        serde_json::json!({ "host": "shared", "port": 5432 }),
+    );
+    write(
+        &vault.address,
+        "myapp/db-credentials",
+        serde_json::json!({ "host": "override" }),
+    );
+
+    let source = Vault::new(
+        &vault.address,
+        "secret",
+        Keys::several(["myapp/db-defaults", "myapp/db-credentials"]),
+    )
+    .with_key("db")
+    .with_token(TOKEN);
+
+    let fetched = source.fetch().expect("both secrets are there");
+
+    assert_eq!(fetched.format, Format::Json);
+
+    let parsed: serde_json::Value = serde_json::from_str(&fetched.text).unwrap();
+    assert_eq!(parsed["db"]["host"], "override", "the later path wins");
+    assert_eq!(
+        parsed["db"]["port"], 5432,
+        "a field only the earlier path has survives"
+    );
+}
+
+/// One unreadable path fails the whole fetch, naming it: a section quietly
+/// missing half of itself is worse than a refresh that failed.
+#[test]
+fn one_missing_path_in_a_list_fails_the_whole_fetch() {
+    let vault = vault_with("myapp/half", serde_json::json!({ "host": "shared" }));
+
+    let source = Vault::new(
+        &vault.address,
+        "secret",
+        Keys::several(["myapp/half", "myapp/never-written"]),
+    )
+    .with_key("db")
+    .with_token(TOKEN);
+
+    let error = source.fetch().expect_err("the second path is not there");
+
+    assert_eq!(error.kind(), dynamic_config::ErrorKind::Remote);
+    assert!(error.to_string().contains("myapp/never-written"), "{error}");
 }
 
 #[test]
@@ -481,8 +538,13 @@ fn bad_credentials_say_which_method_refused_them() {
 
     let error = source.fetch().expect_err("there is no such user");
 
-    assert_eq!(error.kind(), dynamic_config::ErrorKind::Remote);
+    // A login Vault refused is a credential that could not be obtained.
+    assert_eq!(error.kind(), dynamic_config::ErrorKind::Auth);
     assert!(error.to_string().contains("userpass"), "{error}");
+    assert!(
+        !error.to_string().contains("wrong"),
+        "the password must not be quoted back: {error}"
+    );
 }
 
 #[test]

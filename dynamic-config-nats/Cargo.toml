@@ -21,17 +21,22 @@ exclude.workspace = true
 # NATS is a streaming protocol and its client is async throughout, so this
 # implements the async trait rather than the blocking one.
 dynamic-config = { workspace = true, features = ["async"] }
+dynamic-config-store-core = { workspace = true }
 async-nats = "0.50"
 # For `StreamExt::next` over the KV watch. Default features off: this needs the
 # stream adapters, not an executor.
 futures-util = { version = "0.3", default-features = false, features = ["std"] }
+# The timer only. `async-nats` already spawns its connection handler on tokio,
+# so this adds a name to the dependency list rather than a runtime to the
+# program: `with_timeout` needs a clock, and that is the one already here.
+tokio = { version = "1.47", features = ["time"] }
 
 [dev-dependencies]
 dynamic-config = { workspace = true, features = ["async", "json"] }
 testcontainers = "0.27"
 testcontainers-modules = { version = "0.15", features = ["nats"] }
 tokio = { version = "1.47", features = ["rt-multi-thread", "macros", "time"] }
-serde = { version = "1.0.210", features = ["derive"] }
+serde = { version = "1.0.221", features = ["derive"] }
 
 [package.metadata.docs.rs]
 all-features = true

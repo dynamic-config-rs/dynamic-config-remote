@@ -11,23 +11,19 @@
 //! reason they do in the Vault crate — the proactive one should normally fire,
 //! and the reactive one covers clock skew and tokens revoked out from under a
 //! running process.
-
-use std::sync::Mutex;
-use std::time::{Duration, Instant};
+//!
+//! *When* a token is close enough to expiry to replace is
+//! [`Cached`](dynamic_config_store_core::credential::Cached)'s decision, shared
+//! with the Vault and Firestore crates. Because there is no renewal to choose
+//! between, nothing else of this store's token handling is left to decide:
+//! [`Consul`](crate::Consul) hands `Cached` a closure that logs in, and that
+//! is the whole of it.
 
 use dynamic_config::Error;
 
-/// How close to expiry a token may get before it is refreshed.
-///
-/// One name and one value across the three token-caching store crates, on
-/// purpose. The margin is also the only cushion against clock skew: expiry
-/// is computed from a *local* `Instant` plus a *server-reported* TTL, so any
-/// disagreement between the server's issue time and our receipt time eats
-/// into it. A minute absorbs the skew a real fleet actually has.
-const REFRESH_WITHIN: Duration = Duration::from_secs(60);
-
 /// Where a Kubernetes service-account token is mounted, by convention.
-pub const SERVICE_ACCOUNT_TOKEN: &str = "/var/run/secrets/kubernetes.io/serviceaccount/token";
+pub const SERVICE_ACCOUNT_TOKEN: &str =
+    dynamic_config_store_core::credential::SERVICE_ACCOUNT_TOKEN;
 
 /// How to obtain a Consul ACL token.
 #[derive(Clone)]
@@ -180,33 +176,6 @@ impl Auth {
     }
 }
 
-/// A token and when it expires.
-#[derive(Clone)]
-pub(crate) struct Token {
-    pub(crate) secret: String,
-    /// `None` for a token Consul did not put an expiry on.
-    expires: Option<Instant>,
-}
-
-impl Token {
-    pub(crate) fn new(secret: String, ttl: Option<Duration>) -> Self {
-        Self {
-            secret,
-            // `checked_add` because the TTL comes from the agent: one answering
-            // with a nonsense `ExpirationTTL` would otherwise panic the process
-            // on the arithmetic. Too large to represent is treated as no
-            // expiry, which is what a number that large means anyway.
-            expires: ttl.and_then(|ttl| Instant::now().checked_add(ttl)),
-        }
-    }
-
-    fn is_stale(&self) -> bool {
-        self.expires.is_some_and(|expires| {
-            expires.saturating_duration_since(Instant::now()) < REFRESH_WITHIN
-        })
-    }
-}
-
 // Debug is hand-written for every type on this page that can hold a secret:
 // a derive prints payloads, and the payloads here are ACL tokens. What IS
 // printed — variant names, method names, expiry — is what a person debugging
@@ -233,61 +202,6 @@ impl std::fmt::Debug for Bearer {
             // never held here.
             Self::File(path) => f.debug_tuple("File").field(path).finish(),
         }
-    }
-}
-
-impl std::fmt::Debug for Token {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("Token")
-            .field("secret", &"***")
-            .field("expires", &self.expires)
-            .finish()
-    }
-}
-
-/// The current token for one source.
-#[derive(Debug, Default)]
-pub(crate) struct Session {
-    token: Mutex<Option<Token>>,
-}
-
-impl Session {
-    pub(crate) const fn new() -> Self {
-        Self {
-            token: Mutex::new(None),
-        }
-    }
-
-    /// The token to present, logging in again if it is time.
-    ///
-    /// # Errors
-    ///
-    /// Whatever logging in reports.
-    pub(crate) fn token(&self, login: impl Fn() -> Result<Token, Error>) -> Result<String, Error> {
-        let mut slot = self.lock();
-
-        if let Some(token) = slot.as_ref() {
-            if !token.is_stale() {
-                return Ok(token.secret.clone());
-            }
-        }
-
-        let fresh = login()?;
-        let secret = fresh.secret.clone();
-        *slot = Some(fresh);
-
-        Ok(secret)
-    }
-
-    /// Throws the current token away, so the next request logs in again.
-    pub(crate) fn invalidate(&self) {
-        *self.lock() = None;
-    }
-
-    fn lock(&self) -> std::sync::MutexGuard<'_, Option<Token>> {
-        self.token
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 }
 
@@ -342,51 +256,11 @@ mod tests {
         assert!(matches!(Auth::from_environment(), Auth::Anonymous));
     }
 
-    #[test]
-    fn a_ttl_too_large_to_represent_is_treated_as_no_expiry() {
-        // An agent answering with nonsense must not be able to panic the
-        // process on `Instant + Duration`.
-        assert!(!Token::new("t".to_owned(), Some(Duration::from_nanos(u64::MAX))).is_stale());
-    }
-
-    #[test]
-    fn a_token_with_no_expiry_is_never_stale() {
-        assert!(!Token::new("t".to_owned(), None).is_stale());
-    }
-
-    #[test]
-    fn a_token_near_its_expiry_is_stale() {
-        assert!(!Token::new("t".to_owned(), Some(Duration::from_secs(3600))).is_stale());
-        assert!(Token::new("t".to_owned(), Some(REFRESH_WITHIN / 2)).is_stale());
-    }
-
-    #[test]
-    fn a_session_logs_in_once_and_then_reuses_the_token() {
-        use std::sync::atomic::{AtomicUsize, Ordering};
-
-        let logins = AtomicUsize::new(0);
-        let session = Session::new();
-
-        let login = || {
-            logins.fetch_add(1, Ordering::SeqCst);
-
-            Ok(Token::new(
-                "token".to_owned(),
-                Some(Duration::from_secs(3600)),
-            ))
-        };
-
-        assert_eq!(session.token(login).unwrap(), "token");
-        assert_eq!(session.token(login).unwrap(), "token");
-        assert_eq!(logins.load(Ordering::SeqCst), 1);
-
-        session.invalidate();
-
-        assert_eq!(session.token(login).unwrap(), "token");
-        assert_eq!(
-            logins.load(Ordering::SeqCst),
-            2,
-            "a 403 must be able to force a fresh login"
-        );
-    }
+    // When a token is stale, what a TTL too large to represent means, and
+    // that a login happens once rather than per request, are
+    // `dynamic-config-store-core`'s tests now: they were the same assertions
+    // here, in the Vault crate and in the Firestore crate, over the same
+    // code. What is Consul's alone — that a login is *reached* only for
+    // `Auth::Login`, and never for a supplied or absent token — is
+    // `mock_agent.rs`.
 }

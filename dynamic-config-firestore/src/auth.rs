@@ -1,18 +1,15 @@
 //! Getting an access token, and getting another one before it expires.
+//!
+//! *When* to fetch another one is [`Cached`]'s decision, shared with the
+//! Consul and Vault crates; what a token is worth fetching from, and how, is
+//! this module's. Firestore is the simplest of the three: the metadata server
+//! mints a token and cannot extend one, so there is no renewal path to choose
+//! between.
 
-use std::sync::Mutex;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use dynamic_config::Error;
-
-/// How close to expiry a token may get before it is refreshed.
-///
-/// One name and one value across the three token-caching store crates, on
-/// purpose. The margin is also the only cushion against clock skew: expiry
-/// is computed from a *local* `Instant` plus a *server-reported* TTL, so any
-/// disagreement between the server's issue time and our receipt time eats
-/// into it. A minute absorbs the skew a real fleet actually has.
-const REFRESH_WITHIN: Duration = Duration::from_secs(60);
+use dynamic_config_store_core::credential::{Cached, Issued};
 
 /// Where a Google workload asks for its own token. Reachable from GKE, Cloud
 /// Run, GCE and Cloud Functions, and from nowhere else — which is the security
@@ -85,40 +82,16 @@ impl std::fmt::Debug for Auth {
     }
 }
 
-/// A token and when it expires.
-struct Token {
-    secret: String,
-    /// `None` for a token nothing said an expiry for.
-    expires: Option<Instant>,
-}
-
-impl Token {
-    fn is_stale(&self) -> bool {
-        self.expires.is_some_and(|expires| {
-            expires.saturating_duration_since(Instant::now()) < REFRESH_WITHIN
-        })
-    }
-}
-
-impl std::fmt::Debug for Token {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("Token")
-            .field("secret", &"***")
-            .field("expires", &self.expires)
-            .finish()
-    }
-}
-
 /// The current token for one source.
 #[derive(Debug, Default)]
 pub(crate) struct Session {
-    token: Mutex<Option<Token>>,
+    token: Cached<String>,
 }
 
 impl Session {
     pub(crate) const fn new() -> Self {
         Self {
-            token: Mutex::new(None),
+            token: Cached::new(),
         }
     }
 
@@ -126,23 +99,25 @@ impl Session {
     ///
     /// `Ok(None)` when there is nothing to present, which is the right answer
     /// for the emulator.
+    ///
+    /// Only the metadata server's token is cached: the emulator presents
+    /// nothing, and a token handed in from outside is the same string every
+    /// time, so a cache in front of either would be a lock around a constant.
     pub(crate) fn token(&self, auth: &Auth, agent: &ureq::Agent) -> Result<Option<String>, Error> {
         match auth {
             Auth::Emulator => Ok(None),
             Auth::AccessToken(token) => Ok(Some(token.clone())),
-            Auth::MetadataServer { url } => self.metadata_token(url, agent).map(Some),
+            Auth::MetadataServer { url } => self
+                // The previous token is ignored: the metadata server mints,
+                // it does not extend.
+                .token
+                .get(|_previous| Self::mint(url, agent))
+                .map(Some),
         }
     }
 
-    fn metadata_token(&self, url: &str, agent: &ureq::Agent) -> Result<String, Error> {
-        let mut slot = self.lock();
-
-        if let Some(token) = slot.as_ref() {
-            if !token.is_stale() {
-                return Ok(token.secret.clone());
-            }
-        }
-
+    /// One trip to the metadata server.
+    fn mint(url: &str, agent: &ureq::Agent) -> Result<Issued<String>, Error> {
         let response: serde_json::Value = agent
             .get(url)
             // Without this header the metadata server refuses, which is what
@@ -150,7 +125,19 @@ impl Session {
             // workload's credentials.
             .header("Metadata-Flavor", "Google")
             .call()
-            .map_err(|error| Error::remote(format!("firestore: the metadata server: {error}")))?
+            .map_err(|error| {
+                let described = format!("firestore: the metadata server: {error}");
+
+                // A token that could not be obtained is an auth failure, but
+                // only when the metadata server *answered* and refused —
+                // 403 is what it says when the `Metadata-Flavor` header is
+                // missing or the workload has no identity attached. Being
+                // unable to reach it at all is `Remote`: it comes back.
+                match error {
+                    ureq::Error::StatusCode(401 | 403) => Error::auth(described),
+                    _ => Error::remote(described),
+                }
+            })?
             .body_mut()
             .read_json()
             .map_err(|error| {
@@ -167,31 +154,20 @@ impl Session {
             })?
             .to_owned();
 
-        let expires = response
+        // Zero seconds is a lifetime nothing can be done with, so it is read
+        // as "the server said nothing" rather than "already expired".
+        let ttl = response
             .get("expires_in")
             .and_then(serde_json::Value::as_u64)
             .filter(|seconds| *seconds > 0)
-            // `checked_add` because the value comes from the server: a nonsense
-            // number would otherwise panic the process on the arithmetic.
-            .and_then(|seconds| Instant::now().checked_add(Duration::from_secs(seconds)));
+            .map(Duration::from_secs);
 
-        *slot = Some(Token {
-            secret: secret.clone(),
-            expires,
-        });
-
-        Ok(secret)
+        Ok(Issued { value: secret, ttl })
     }
 
     /// Throws the current token away, so the next request fetches one.
     pub(crate) fn invalidate(&self) {
-        *self.lock() = None;
-    }
-
-    fn lock(&self) -> std::sync::MutexGuard<'_, Option<Token>> {
-        self.token
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
+        self.token.invalidate();
     }
 }
 
@@ -233,29 +209,9 @@ mod tests {
         assert_eq!(url, "http://127.0.0.1:8081/token");
     }
 
-    #[test]
-    fn a_token_near_its_expiry_is_stale() {
-        let fresh = Token {
-            secret: "t".to_owned(),
-            expires: Instant::now().checked_add(Duration::from_secs(3600)),
-        };
-        let expiring = Token {
-            secret: "t".to_owned(),
-            expires: Instant::now().checked_add(REFRESH_WITHIN / 2),
-        };
-
-        assert!(!fresh.is_stale());
-        assert!(expiring.is_stale());
-    }
-
-    #[test]
-    fn a_lifetime_too_large_to_represent_is_treated_as_no_expiry() {
-        // A server answering with nonsense must not panic the process.
-        let token = Token {
-            secret: "t".to_owned(),
-            expires: Instant::now().checked_add(Duration::from_secs(u64::MAX)),
-        };
-
-        assert!(!token.is_stale());
-    }
+    // When a token is stale, what a lifetime too large to represent means,
+    // and that a fetch happens once rather than per request, are
+    // `dynamic-config-store-core`'s tests now: they were the same three
+    // assertions here, in the Consul crate and in the Vault crate, over the
+    // same code.
 }

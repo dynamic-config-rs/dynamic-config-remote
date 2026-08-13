@@ -68,7 +68,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // ---------------------------------------------------------------------
     println!("\nwatching for 30 seconds — try another `curl -X PATCH ...`");
 
-    let watcher = source(&endpoint);
+    // `reporting_to` is the other half of the sink: `apply` records a
+    // delivery, and this records a poll that came back with nothing — so a
+    // project that stopped answering stops looking like a document that simply
+    // has not changed.
+    let watcher = source(&endpoint).reporting_to(sink);
     let watch = RemoteWatch::new();
     let watching = watch.watching();
 

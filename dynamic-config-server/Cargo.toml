@@ -1,0 +1,225 @@
+[package]
+name = "dynamic-config-server"
+description = "An HTTP configuration server for dynamic-config: one document per application and profile, served under per-caller authorisation."
+version.workspace = true
+edition.workspace = true
+# Above the workspace floor of 1.71, and the only crate here that is: axum
+# 0.8 declares 1.80 and this crate is a server, so there is no version of it
+# that does not carry a web framework. Measured, not declared — `cargo +1.79
+# check -p dynamic-config-server` fails inside axum-core. The library's floor
+# is untouched: nothing depends on this crate.
+rust-version = "1.80"
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+documentation = "https://docs.rs/dynamic-config-server"
+authors.workspace = true
+categories.workspace = true
+keywords.workspace = true
+exclude.workspace = true
+# The README carries a dependency snippet as well as an install line, because
+# the router *is* the API: a service already running axum mounts it rather
+# than running the binary. That puts this crate in the roster the two version
+# gates walk (`scripts/sync-readme-versions.sh` and
+# `doc_surface::the_readmes_agree_on_one_version`), which is where a published
+# crate belongs. `dynamic-config-store-core` stays out of it: nothing depends
+# on that crate directly, so it has no snippet to keep honest.
+
+[dependencies]
+# The engine. `watch` for the file watcher (the server never polls), `tokio`
+# for `off_thread`, so the diagnostic endpoints re-read sources on the
+# blocking pool rather than on a request worker, and `telemetry` for
+# `/metrics` — the library's own rendering of the same `ConfigStatus`
+# `/status` returns, rather than a second set of numbers kept here. It pulls
+# nothing in: an exposition format is a wire encoding, not a crate.
+dynamic-config = { workspace = true, features = [
+    "json",
+    "toml",
+    "yaml",
+    "watch",
+    "async",
+    "tokio",
+    "telemetry",
+] }
+
+# Default features off: `axum::serve` needs `tokio` and `http1`, JSON
+# responses need `json`, and the rest — multipart, ws, form, tracing — is
+# surface this server does not expose and would not want in its CVE feed.
+axum = { version = "0.8", default-features = false, features = [
+    "http1",
+    "json",
+    "tokio",
+] }
+tokio = { version = "1.47", default-features = false, features = [
+    "rt-multi-thread",
+    "macros",
+    "net",
+    "signal",
+    "time",
+] }
+# The one trait `Sse` needs — `Stream` — from the crate that defines it.
+# Already in the graph beneath axum, which is what makes this a name for
+# something that is there rather than a new dependency: no proc macro, no
+# executor, no runtime, and nothing to configure.
+futures-core = { version = "0.3.31", default-features = false, features = [
+    "std",
+] }
+serde = { version = "1.0.221", features = ["derive"] }
+serde_json = "1.0.127"
+
+# --- TLS, behind the `tls` feature ---------------------------------------
+#
+# Off by default, and that is the honest half of the decision this crate used
+# to record as "no TLS at all": a deployment that already has a terminator in
+# front keeps exactly the dependency graph it has today, and the ones that
+# terminate here opt in. `--features tls` is the switch; a `[server.tls]`
+# block in a build without it is a refusal, not a silently ignored key.
+#
+# `ring` rather than rustls's default `aws-lc-rs`, and no OpenSSL anywhere:
+# aws-lc-rs vendors AWS-LC, which is a large C library built with cmake (and
+# NASM on Windows), while `ring` is a small amount of C and assembly built
+# with `cc` — and, more to the point, `ring` and rustls 0.23 are *already* in
+# this workspace's graph through async-nats and the AWS SDK. The feature
+# therefore adds no crate to the lockfile that a `--all-features` build did
+# not already contain, which is a different and much better trade than the
+# one this crate turned down when it recorded "no second TLS stack".
+# `0.23.31`, shared across the workspace, and not a preference. Three
+# requirements meet here: `aws-lc-rs` as a feature name does not exist before
+# 0.23.2, `aws-smithy-http-client` requires `^0.23.31`, and
+# `dynamic-config-python-remote` puts every store and the server in one graph.
+# `-Z direct-minimal-versions` pins each direct declaration to its *own*
+# floor, so any floor below the union's maximum is a contradiction rather
+# than a lower bound.
+rustls = { version = "0.23.31", default-features = false, features = [
+    "ring",
+    "std",
+    "tls12",
+], optional = true }
+tokio-rustls = { version = "0.26.2", default-features = false, features = [
+    "ring",
+    "tls12",
+], optional = true }
+# The accept loop is this crate's own (see `src/serve.rs` for why), so it
+# names the two pieces `axum::serve` uses internally rather than a second
+# server framework: a hyper HTTP/1 connection, and the adapter that hands a
+# `Router` to it. Both are already compiled as part of axum's `tokio`
+# feature — naming them here adds no crate. The features are chosen by the
+# two Cargo features rather than here, because `server` and `client` are
+# different halves of the same crate and neither build should compile the
+# other's.
+hyper = { version = "1.7", default-features = false, optional = true }
+# `0.1.16`: the `service` feature this crate turns on arrived in 0.1.2, and
+# `aws-smithy-http-client` — in the same graph whenever the Python remote
+# wheel is built — requires `^0.1.16`. Under `-Z direct-minimal-versions`
+# every direct declaration is pinned to its *own* floor, so a floor below
+# what anything else in the union needs is a contradiction rather than a
+# preference.
+hyper-util = { version = "0.1.16", default-features = false, optional = true }
+
+# --- the client half, behind the `client` feature -------------------------
+#
+# The vocabulary for TLS is `dynamic_config_store_core::tls::TlsConfig`, the
+# same data-only type all eight store crates take. A third spelling for "a CA
+# to trust and a client certificate to present" would be a defect, so this
+# crate takes a dependency rather than an opinion. Published one wave ahead
+# of this crate in `release.yml`, so the order already works.
+dynamic-config-store-core = { workspace = true, optional = true }
+# Reading a bounded response body, and an empty request one. Already beneath
+# axum; naming it adds no crate.
+http-body-util = { version = "0.1.2", optional = true }
+# `1.11.1`: `async-nats` requires it, and `dynamic-config-python-remote`
+# puts that crate and this one in one graph — a floor of `^1.10` here pins
+# 1.10.0 under `-Z direct-minimal-versions` and contradicts it.
+bytes = { version = "1.11.1", optional = true }
+# The platform's trust store, for the case store-core defines as "an empty
+# `TlsConfig` is not no-TLS, it is the platform's own roots". Already in this
+# workspace's lockfile, and it links no OpenSSL: `openssl-probe` finds the
+# usual certificate *paths* and reads them, which is what a program without
+# an OpenSSL dependency has to do to find what OpenSSL would have found.
+rustls-native-certs = { version = "0.8.1", optional = true }
+
+[features]
+default = []
+# TLS termination and mutual TLS. See `book/src/config-server.md`.
+tls = [
+    "dep:rustls",
+    "dep:tokio-rustls",
+    "dep:hyper",
+    "hyper/http1",
+    "hyper/server",
+    "dep:hyper-util",
+    "hyper-util/service",
+    "hyper-util/tokio",
+    "tokio/sync",
+]
+# The client half: a `RemoteSource` for this server's document endpoint and
+# the task that follows its change stream. In this crate rather than a
+# companion so the two halves are tested against each other — including the
+# one test that matters most, which kills the server and asserts its clients
+# keep serving.
+client = [
+    "dep:rustls",
+    "dep:tokio-rustls",
+    "dep:rustls-native-certs",
+    "dep:dynamic-config-store-core",
+    "dep:http-body-util",
+    "dep:bytes",
+    "dep:hyper",
+    "hyper/http1",
+    "hyper/client",
+    "dep:hyper-util",
+    "hyper-util/tokio",
+    "tokio/io-util",
+]
+
+[dev-dependencies]
+# Drives the real router without a socket: `ServiceExt::oneshot`.
+# `0.5.2`: axum 0.8 itself requires `^0.5.2`, and under
+# `-Z direct-minimal-versions` this crate's own `^0.5` would pin 0.5.0 and
+# contradict it.
+tower = { version = "0.5.2", features = ["util"] }
+http-body-util = "0.1.2"
+# `3.26`: `gix-odb` requires it, and `dynamic-config-python-remote` puts the
+# git store in the same graph as everything else. `-Z direct-minimal-versions`
+# pins a bare `3` to 3.0.0, which nothing in that union can build against.
+tempfile = "3.26"
+tokio = { version = "1.47", features = [
+    "rt-multi-thread",
+    "macros",
+    "time",
+    # The TLS tests and the example write a request and read a response by
+    # hand: the interesting part is the handshake, and a client library
+    # between the assertion and the thing asserted is one more thing to
+    # explain when it fails.
+    "io-util",
+] }
+# Certificates are generated by the test that needs them and by the example,
+# never checked in: a repository with a private key in it has a private key
+# in it, whatever the README says about the key being a test one. `ring`
+# again, for the reason above. Pinned in the lockfile to the last 0.14 that
+# declares 1.71, so a `cargo +1.80 test` stays possible; the requirement is a
+# caret because nothing here needs a newer one.
+rcgen = { version = "0.14", default-features = false, features = [
+    "crypto",
+    "pem",
+    "ring",
+] }
+# The client half of the handshake test: a real TLS client presenting a real
+# certificate to a real socket.
+tokio-rustls = { version = "0.26.2", default-features = false, features = [
+    "ring",
+    "tls12",
+] }
+
+[[bin]]
+name = "dynamic-config-server"
+path = "src/main.rs"
+
+[[example]]
+name = "tls_mutual"
+path = "examples/tls_mutual.rs"
+required-features = ["tls"]
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]

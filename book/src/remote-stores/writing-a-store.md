@@ -60,6 +60,106 @@ A failed `fetch` costs nothing downstream — the previously fetched document
 stays in place, so an unreachable store does not take a working process
 down with it. Your job is only to return an honest error.
 
+## Several keys as one document
+
+`fetch` returns one document, and a deployment that splits configuration
+across a prefix — `myapp/db`, `myapp/server` — has several. Merging them is
+the store's job, because only the store knows what "a prefix" means in its
+protocol, and it has to happen before `fetch` returns: `Fetched` carries one
+text and one format on purpose, and widening it would change a trait every
+external store implements.
+
+The merge is not the store's job to *write*, though. `Value` parses, merges
+and re-emits any format this build can read, so a store crate needs no
+parser of its own:
+
+```rust
+# use dynamic_config::{Error, Fetched, Format, Value};
+fn merged(documents: &[String], format: Format) -> Result<Fetched, Error> {
+    let mut document = Value::parse(&documents[0], format)?;
+
+    for later in &documents[1..] {
+        document.merge(Value::parse(later, format)?);
+    }
+
+    Ok(Fetched::new(document.render(format)?, format))
+}
+```
+
+`merge` is later-wins, tables deep, arrays replaced whole — the rule this
+crate already teaches for files, so a caller who lists keys is expressing an
+order the same way a caller who lists files is.
+
+A **prefix** read means something different: keys under a prefix are sections
+nobody intended to overlap, so a collision there is a deployment bug rather
+than a precedence question. `Value::overlapping_paths` names the leaves two
+documents both supply — paths only, never values, so it is safe to put in the
+error a person will read:
+
+```rust
+# use dynamic_config::{Error, Value};
+# fn refuse(first: &Value, second: &Value) -> Result<(), Error> {
+let clashes = first.overlapping_paths(second);
+
+if !clashes.is_empty() {
+    return Err(Error::remote(format!(
+        "two keys under this prefix both supply {}",
+        clashes.join(", ")
+    )));
+}
+# Ok(())
+# }
+```
+
+Two things this costs, and both belong in your crate's own documentation
+rather than in an incident. **Provenance is store-grained:** a merged
+document is one layer, so `explain` names the store and not which key inside
+it supplied a value. **A partial read is a failure, not half a
+configuration** — `?` on the parse gives you that, and the previously fetched
+document keeps serving.
+
+The shipped stores that read several keys — all eight of them — do not
+each write that merge. It is one implementation in
+`dynamic-config-store-core`'s `documents` module, which is where the four
+decisions that are the same everywhere live: the two ordering rules above,
+the collision report, a ceiling on how many keys one prefix folds (512 —
+a prefix is caller input and the answer to it is server input), and the
+literal check that a key the server returned is actually under the prefix
+that was asked for. Read it before writing your own; it is not a stable API,
+but it is the corpus's answer, and an eighth store copying the closest
+shipped one gets it for free.
+
+Two more things the corpus settled, both worth copying:
+
+- **Find the keys the way the protocol offers, in one call if it has one.**
+  etcd has a range read and a transaction of range reads; Consul has
+  `?recurse`; Redis has `SCAN` — and `SCAN` rather than `KEYS`, because `KEYS`
+  blocks the server for the length of the whole key space; S3 has
+  `ListObjectsV2`; Firestore has `:batchGet`. Where the one call does not
+  exist, say so: a list Consul, Vault, NATS or S3 reads one key at a time is
+  not read atomically, and their documentation says that rather than implying
+  otherwise.
+- **Where the budget is checked is part of the design.** A prefix is caller
+  input and the answer to it is server input, so the ceiling has to bite on
+  the *listing*: S3 asks each page for one key more than the budget allows,
+  which refuses a prefix over a whole bucket after one request rather than
+  after a million bodies. A count taken after everything is fetched is a
+  ceiling on nothing.
+- **A form the protocol cannot carry honestly is better left out than
+  approximated.** NATS has no prefix form because the only listing its client
+  exposes walks the whole bucket; Vault and Firestore have none because a
+  secret is a section's contents, so a subtree folded into one section
+  collides on every field name two of them share. A `Keys` enum without a
+  `Prefix` variant says that in the type, where a caller meets it, rather than
+  in an error at run time.
+- **A multi-key source refuses to be watched.** Not for want of a loop: a
+  watch on a set has to say *the set changed* and then re-read the set **as of
+  one instant**, and a store with no batch read cannot do the second. Waking
+  on one key and re-reading key by key installs a document that never existed
+  — and it does it precisely while a deployment is writing, which is the
+  moment a watch exists to catch. Refusing at `watch()` and pointing at
+  polling is honest; a loop that can serve half an update is not.
+
 ## The watch loop
 
 The core deliberately does not own this loop: a watch is long-lived and

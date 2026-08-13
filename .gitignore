@@ -1,5 +1,8 @@
-# Build output. The whole workspace shares one, so one rule covers ten crates.
-/target/
+# Build output. The workspace shares one — and it is not the only one: a
+# doctest that writes a file writes it relative to *its* crate, under a
+# `target/` an anchored rule would not have covered. Unanchored, so every
+# one of them is ignored wherever it is.
+target/
 
 # `cargo package` and `cargo publish` write here; the tarballs are artefacts of
 # a release, not part of one.
@@ -25,6 +28,11 @@ Cargo.toml.orig
 # suites create the directory and their own fixtures, so a checkout carries
 # none of it and `cargo test` never dirties the tree.
 /dynamic-config/tests/scratch/
+
+# Same, for the config server's watcher test: the system temporary directory
+# is a symlink on macOS and an 8.3 short name on Windows, and a file watcher
+# notices both — so that test writes under the crate instead.
+/dynamic-config-server/tests/scratch/
 
 /RELEASE-CHECKLIST.md
 
@@ -66,3 +74,10 @@ ENV/
 coverage.xml
 htmlcov/
 .benchmarks/
+
+# Implementation notes for the next wave: working documents, written to be
+# read while building and thrown away after. Deliberately untracked — the
+# decisions that survive belong in ROADMAP.md, the book or a changelog,
+# and a design doc that outlives its implementation is a second source of
+# truth nobody updates.
+/docs/implementation/

@@ -59,7 +59,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // ---------------------------------------------------------------------
     println!("\nwatching for 30 seconds — try another `redis-cli set ...`");
 
-    let watcher = Redis::new(&url, "myapp/db.json")?;
+    // `reporting_to` is the other half of the sink: `apply` records a delivery,
+    // and this records an attempt that came back with nothing — so a loop whose
+    // subscription died an hour ago stops reporting the server as healthy.
+    let watcher = Redis::new(&url, "myapp/db.json")?.reporting_to(sink);
     let watch = RemoteWatch::new();
     let watching = watch.watching();
 

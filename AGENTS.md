@@ -6,32 +6,42 @@ things an agent gets wrong made explicit.
 
 ## Orientation
 
-Ten crates in one workspace, one version, published together — and every
-README's install snippet names that version, the root's and the nine
-companions' alike. The pre-release hook rewrites them all to the number
-being cut (`scripts/sync-readme-versions.sh`), and `doc_surface.rs`'s
+Every README's install snippet names the version being cut — the root's and
+the eleven companions' alike. The pre-release hook rewrites them all
+(`scripts/sync-readme-versions.sh`), and `doc_surface.rs`'s
 `the_readmes_agree_on_one_version` fails the gate if one is ever left
 behind anyway. The book never carries the number at all —
 its snippets say `<version>`.
 
-Twelve crates in one workspace, one version, published together — ten to
-crates.io, one to PyPI, one to neither:
+Sixteen crates in one workspace, one version, published together —
+fourteen to crates.io, two to PyPI:
 
 ```text
 dynamic-config-macros      the proc macro; no stable API of its own
 dynamic-config             everything with behaviour — loading, layers, storage, watching
+dynamic-config-store-core  what the store crates share: the credential cache,
+                           URL redaction, the watch panic net. No stable API
 dynamic-config-etcd        \
 dynamic-config-consul       |
 dynamic-config-nats         |  one remote store each, behind a `RemoteSource`
 dynamic-config-redis        |  or `AsyncRemoteSource` implementation
 dynamic-config-vault        |
 dynamic-config-s3           |
-dynamic-config-firestore   /
+dynamic-config-firestore    |
+dynamic-config-git         /   (git: shallow single-ref fetch, any host)
 dynamic-config-embedded    a separate `no_std` crate, sharing no code
+dynamic-config-server      serves configuration over HTTP; a security boundary,
+                           so it starts from a threat model rather than a router
 dynamic-config-cli         the `explain`/`diff` binary
 dynamic-config-python      a PyO3 extension; ships to PyPI, never to crates.io
                            (no dependencies — Pydantic is an extra)
+dynamic-config-python-remote  the stores for Python, a second wheel behind an
+                           extra: a wheel is built per platform, so seven
+                           clients cannot ride in the install that reads a file
 ```
+
+`fuzz/` is its own workspace, so its lockfile and its nightly requirement
+touch none of the above.
 
 Read [README.md](README.md) before changing anything: it is the specification,
 not a summary. [Not planned](book/src/limitations.md#not-planned) lists what is deliberately
@@ -76,9 +86,12 @@ unavailable, say so rather than skipping `just containers` silently.
 
 ## Rules that are not negotiable
 
-**Reading configuration is lock-free.** `current()` is an atomic load. Anything
-that puts a mutex, an allocation or a parse on that path is wrong regardless of
-how convenient it is.
+**Reading configuration is lock-free and allocation-free.** `current()`
+acquires an `arc-swap` guard: **85 instructions** and zero allocations,
+measured by `benches/instructions.rs` and `benches/alloc_profile.rs` rather
+than asserted. Anything that puts a mutex, an allocation or a parse on that
+path is wrong regardless of how convenient it is — and "an atomic load" is
+the shape of the claim, not its cost.
 
 **Secrets are paths and types, never values.** Diffs, `check()` reports,
 unknown-key suggestions and *error messages* all report which key moved and what
@@ -98,6 +111,33 @@ the previous one serving, `changes()` — and nothing else.
 else is a feature or a companion crate.
 
 **`#![forbid(unsafe_code)]`** in every crate, checked by CI.
+
+**Tests run on Linux, macOS and Windows, and a test may not assume which.**
+The 0.6 release lost five CI rounds to this, each a different shape of the
+same mistake, so the shapes are worth naming:
+
+- **Never assert on how a path is *spelled*.** `with_file_name` rebuilds a
+  path with the platform's separator, so `/etc/app/config.toml` becomes
+  `/etc/app\config..toml` on Windows. Compare `Path` components — parent,
+  extension, file name — not substrings or separator counts.
+- **Never embed a path in generated TOML or JSON.** A Windows path in a TOML
+  *basic* string makes `\a` an escape sequence and the file will not parse.
+  Write forward slashes, which cargo and this crate's loader both accept
+  everywhere.
+- **Never let a `#[cfg(unix)]` block strand something outside it.** A `let mut`
+  the block mutates, an import only it uses, a struct only its test builds —
+  each is an error on Windows under `-D warnings`, and none is visible from
+  the Unix branch. Prefer two whole functions over one with a block inside.
+- **Do not put a watched file in the system temporary directory.** On macOS
+  `/var` is a symlink to `/private/var`, so FSEvents reports a path the
+  watcher was never registered on; on Windows the runner's `TEMP` is an 8.3
+  short name and the events carry the long one. The engine's own watcher
+  tests use `tests/scratch/` under the crate, and that is why.
+
+`cargo check --tests --target x86_64-pc-windows-msvc` catches the
+compile-time half from a Linux machine — for `dynamic-config` at least; the
+crates that pull `ring` or `aws-lc-sys` need a Windows C toolchain and cannot
+be cross-checked. The runtime half only the CI matrix finds.
 
 **MSRV is measured, not declared.** The core floor is 1.71. A feature that
 raises it says so in the README table *and* gets a row in the CI matrix — `age`

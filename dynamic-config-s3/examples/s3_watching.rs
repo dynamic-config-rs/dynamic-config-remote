@@ -79,7 +79,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // ---------------------------------------------------------------------
     println!("\nwatching for 30 seconds — try another `mc pipe ...`");
 
-    let watcher = source(&endpoint).await;
+    // `reporting_to` is the other half of the sink: `apply` records a delivery,
+    // and this records an attempt that came back with nothing — so a loop that
+    // has been polling into the void for an hour, which is a poll loop's whole
+    // failure mode, stops reporting the bucket as healthy.
+    let watcher = source(&endpoint).await.reporting_to(sink);
     let watch = RemoteWatch::new();
     let watching = watch.watching();
 

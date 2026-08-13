@@ -20,6 +20,7 @@ exclude.workspace = true
 [dependencies]
 # The AWS SDK is async throughout, so this implements the async trait.
 dynamic-config = { workspace = true, features = ["async"] }
+dynamic-config-store-core = { workspace = true }
 # `default-features = false` plus an explicit HTTP client, so the TLS stack is
 # a choice rather than whatever the SDK defaults to this month.
 # The floors are where `default-https-client` first exists (aws-config 1.6,
@@ -36,13 +37,33 @@ aws-sdk-s3 = { version = "1.79", default-features = false, features = [
     "default-https-client",
 ] }
 tokio = { version = "1.47", features = ["time"] }
+# For the shared TLS vocabulary's trust store, and for nothing else. This adds
+# a *name* to the manifest rather than a crate to the build: `default-https-client`
+# above already resolves `aws-smithy-http-client` with `rustls-aws-lc` on, and
+# this declares the same feature explicitly so the SDK cannot quietly move the
+# provider out from under `with_tls`. The default dependency graph is
+# unchanged — `cargo tree` is the same before and after.
+aws-smithy-http-client = { version = "1.1.4", default-features = false, features = [
+    "rustls-aws-lc",
+] }
+# To validate the CA certificate *before* the SDK sees it. Not a nicety: the
+# SDK's rustls connector calls `.expect("cert parsable")` on the material, so
+# an unreadable certificate is a panic at the first connection rather than an
+# error at construction. Already in the tree under the connector above; this
+# names it so the refusal can happen where a caller can be told.
+rustls-pki-types = { version = "1.12", default-features = false, features = ["std"] }
 
 [dev-dependencies]
 dynamic-config = { workspace = true, features = ["async", "json"] }
 testcontainers = "0.27"
 testcontainers-modules = { version = "0.15", features = ["minio"] }
+# A self-signed certificate authority, generated in the test. TLS is the one
+# feature whose tests cannot use a fixture: a certificate expires, and a
+# committed one turns into a suite that fails on a date nobody chose. Dev-only,
+# so it is in no build a user of this crate produces.
+rcgen = "0.14"
 tokio = { version = "1.47", features = ["rt-multi-thread", "macros", "time"] }
-serde = { version = "1.0.210", features = ["derive"] }
+serde = { version = "1.0.221", features = ["derive"] }
 
 [package.metadata.docs.rs]
 all-features = true

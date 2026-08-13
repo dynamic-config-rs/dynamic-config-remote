@@ -29,14 +29,25 @@ tls-roots = ["tls", "etcd-client/tls-roots"]
 # etcd v3 speaks gRPC, so its client is async — which is why this crate
 # implements the async trait rather than the blocking one.
 dynamic-config = { workspace = true, features = ["async"] }
+dynamic-config-store-core = { workspace = true }
 etcd-client = "0.19"
-tokio = { version = "1.47", features = ["sync"] }
+# `time` as well as `sync`: etcd's own `ConnectOptions::with_timeout` bounds
+# connecting, so a per-fetch deadline has to be a `tokio::time::timeout`
+# around the request itself.
+tokio = { version = "1.47", features = ["sync", "time"] }
 
 [dev-dependencies]
 dynamic-config = { workspace = true, features = ["async", "json"] }
 testcontainers = "0.27"
 tokio = { version = "1.47", features = ["rt-multi-thread", "macros", "time"] }
-serde = { version = "1.0.210", features = ["derive"] }
+serde = { version = "1.0.221", features = ["derive"] }
+
+# The mTLS example names `Etcd::with_tls`, which is behind `tls` — without
+# this it would fail to build under `--no-default-features --all-targets`,
+# which is half of what `just lint` checks.
+[[example]]
+name = "etcd_client_certificate"
+required-features = ["tls"]
 
 [package.metadata.docs.rs]
 all-features = true

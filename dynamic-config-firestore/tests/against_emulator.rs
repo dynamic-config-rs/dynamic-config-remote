@@ -12,7 +12,7 @@
 use std::time::Duration;
 
 use dynamic_config::{Format, RemoteSource, RemoteWatch};
-use dynamic_config_firestore::Firestore;
+use dynamic_config_firestore::{Firestore, Keys};
 use testcontainers::core::{IntoContainerPort, WaitFor};
 use testcontainers::{GenericImage, ImageExt};
 
@@ -178,6 +178,72 @@ fn the_document_loads_into_a_struct() {
             port: 6432,
             pool: Pool { max_size: 10 },
         }
+    );
+}
+
+/// Several documents, one section, one `:batchGet` — against the emulator,
+/// which is the authority on whether that request is shaped right. Call order
+/// is the precedence, whatever order the service answers in.
+#[test]
+fn several_documents_merge_into_one_section_and_the_later_one_wins() {
+    let firestore = emulator();
+
+    write(
+        &firestore.endpoint,
+        "config/db",
+        serde_json::json!({
+            "host": { "stringValue": "shared" },
+            "port": { "integerValue": "5432" },
+        }),
+    );
+    write(
+        &firestore.endpoint,
+        "overrides/db",
+        serde_json::json!({ "host": { "stringValue": "override" } }),
+    );
+
+    let fetched = Firestore::new(PROJECT, Keys::several(["config/db", "overrides/db"]))
+        .with_endpoint(&firestore.endpoint)
+        .fetch()
+        .expect("both documents are there");
+
+    assert_eq!(fetched.format, Format::Json);
+    assert!(
+        fetched.text.contains("override") && !fetched.text.contains("shared"),
+        "the later document wins: {}",
+        fetched.text
+    );
+    assert!(
+        fetched.text.contains("5432"),
+        "a field only the earlier document has survives: {}",
+        fetched.text
+    );
+}
+
+/// One missing document fails the whole fetch, naming it: a section quietly
+/// missing half of itself is worse than a refresh that failed.
+#[test]
+fn one_missing_document_in_a_list_fails_the_whole_fetch() {
+    let firestore = emulator();
+
+    write(
+        &firestore.endpoint,
+        "config/half",
+        serde_json::json!({ "host": { "stringValue": "shared" } }),
+    );
+
+    let error = Firestore::new(
+        PROJECT,
+        Keys::several(["config/half", "config/never-written"]),
+    )
+    .with_endpoint(&firestore.endpoint)
+    .fetch()
+    .expect_err("the second document was never written");
+
+    assert_eq!(error.kind(), dynamic_config::ErrorKind::Remote);
+    assert!(
+        error.to_string().contains("config/never-written"),
+        "{error}"
     );
 }
 

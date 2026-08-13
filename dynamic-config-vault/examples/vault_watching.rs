@@ -71,7 +71,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // ---------------------------------------------------------------------
     println!("\nwatching for 30 seconds — try another `curl -X POST ...`");
 
-    let watcher = source(&address, &token);
+    // `reporting_to` is the other half of the sink: `apply` records a
+    // delivery, and this records a tick that came back with nothing — so a
+    // sealed Vault or a revoked token stops looking like a secret that simply
+    // has not changed.
+    let watcher = source(&address, &token).reporting_to(sink);
     let watch = RemoteWatch::new();
     let watching = watch.watching();
 

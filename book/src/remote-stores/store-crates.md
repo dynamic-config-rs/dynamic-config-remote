@@ -4,7 +4,8 @@ One row per store, with the contract columns that differ between them. The
 prose behind every column is in [Remote Stores](../remote-stores.md); each
 store also has its own chapter here — [etcd](etcd.md), [Consul](consul.md),
 [NATS](nats.md), [Redis](redis.md), [Vault](vault.md), [S3](s3.md),
-[Firestore](firestore.md) — and its README has the whole story.
+[Firestore](firestore.md), [git](git.md) — and its README has the whole
+story.
 
 ## The async family — a watch is a future
 
@@ -28,11 +29,29 @@ checks it between requests; dropping the matching `RemoteWatch` stops it.
 | [`dynamic-config-redis`](https://github.com/ctolon/dynamic-config/tree/main/dynamic-config-redis) | Redis | keyspace notifications | a quarter second, whatever the poll interval is | not delivered; fetch first | not a change | fetch failures retry; a dead subscription ends the watch |
 | [`dynamic-config-vault`](https://github.com/ctolon/dynamic-config/tree/main/dynamic-config-vault) | Vault KV v2 | polling the version | a quarter second, whatever the poll interval is | not delivered; fetch first | not a change | backs off and retries |
 | [`dynamic-config-firestore`](https://github.com/ctolon/dynamic-config/tree/main/dynamic-config-firestore) | Firestore | polling `updateTime` | a quarter second, whatever the poll interval is | not delivered; fetch first | not a change | backs off and retries |
+| [`dynamic-config-git`](https://github.com/ctolon/dynamic-config/tree/main/dynamic-config-git) | a git repository | polling the ref advertisement | a quarter second, whatever the poll interval is | not delivered; fetch first | a deleted file fails the read | backs off and retries; a refused credential ends the watch |
+
+**Watching a set** is the column these tables leave out, because it splits the
+family a different way. Four can do it — Consul and etcd by prefix, Redis by a
+named list, git by anything — and four refuse: NATS, Vault, S3 and Firestore,
+along with a Redis *prefix*. The rule is the same everywhere. A watch on a set
+needs the store to say the set changed **and** the set to be re-readable as of
+one instant; where the second half fails, waking on one key and re-reading the
+rest collects one key's new value beside another's old one — a document that
+never existed, installed unprompted. The four that qualify each have an
+answer: a recursive blocking query's reply *is* the subtree at one index, a
+range read at the event's own revision is one revision, an `MGET` is one
+command, and a git fetch resolves one commit whose tree holds every path.
+
+The cost runs the other way instead, and is documented as
+[spurious, never torn](../remote-stores.md#several-keys-as-one-document): a
+delivery may carry a state newer than the write that woke it, and a commit
+touching nothing the source reads still moves the ref.
 
 ## The shared contract
 
 The startup-delivery and deleted-key columns are identical on purpose — they
-are decisions rather than accidents, and they hold across all seven crates.
+are decisions rather than accidents, and they hold across all eight crates.
 Transport failures retry too, except where the table names an error that ends
 the watch, deliberately, so a supervisor can restart it:
 

@@ -19,6 +19,7 @@ exclude.workspace = true
 
 [dependencies]
 dynamic-config = { workspace = true }
+dynamic-config-store-core = { workspace = true }
 ureq = { version = "3.0.12", default-features = false, features = ["rustls", "json"] }
 serde_json = "1.0.127"
 base64 = "0.23"
@@ -26,7 +27,13 @@ base64 = "0.23"
 [dev-dependencies]
 testcontainers = { version = "0.27", features = ["blocking"] }
 testcontainers-modules = { version = "0.15", features = ["consul"] }
-serde = { version = "1.0.210", features = ["derive"] }
+# A self-signed certificate authority, generated in the test. TLS is the one
+# feature whose tests cannot use a fixture: a certificate expires, and a
+# committed one turns into a suite that fails on a date nobody chose. Dev-only,
+# so it is in no build a user of this crate produces.
+rcgen = "0.14"
+
+serde = { version = "1.0.221", features = ["derive"] }
 dynamic-config = { workspace = true, features = ["json"] }
 
 [package.metadata.docs.rs]

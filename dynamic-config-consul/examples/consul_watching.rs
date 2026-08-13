@@ -63,7 +63,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // A short `wait` keeps this example snappy to stop; the one-minute
     // default trades that for fewer requests, which is what a real
     // deployment wants.
-    let watcher = Consul::new(&address, "myapp/db.json").with_wait(Duration::from_secs(10));
+    // `reporting_to` is the other half of the sink: `apply` records a
+    // delivery, and this records an attempt that came back with nothing — so a
+    // loop whose blocking query has been erroring for an hour stops reporting
+    // the agent as healthy.
+    let watcher = Consul::new(&address, "myapp/db.json")
+        .with_wait(Duration::from_secs(10))
+        .reporting_to(sink);
     let watch = RemoteWatch::new();
     let watching = watch.watching();
 

@@ -1,0 +1,35 @@
+[package]
+name = "dynamic-config-store-core"
+description = "Internal machinery shared by the dynamic-config store crates. No stable API."
+version.workspace = true
+edition.workspace = true
+# The floor of the crates that consume it, not of the crates it is consumed
+# by: this holds nothing but `std`, so it must never be the thing that raises
+# a companion's MSRV.
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+documentation = "https://docs.rs/dynamic-config-store-core"
+authors.workspace = true
+categories.workspace = true
+keywords.workspace = true
+exclude.workspace = true
+# Deliberately no `readme`: this crate is an implementation detail of the
+# seven store crates and has no install snippet of its own. A README here
+# would have to carry a version, and the two gates that keep the nine
+# published READMEs agreeing on one number (`sync-readme-versions.sh` and
+# `doc_surface::the_readmes_agree_on_one_version`) count files rather than
+# crates.
+
+[dependencies]
+# For `Error`, `Fetched` and the `Value` parse/merge/render seam. Everything
+# else here is `std`. Deliberately no format feature: which formats a build can
+# read is the *program's* choice, and turning one on here would compile a
+# parser into every store's tree whether anything reads that format or not.
+dynamic-config = { workspace = true }
+
+[dev-dependencies]
+# The merge tests need a format to merge in; `json` is the one every build of
+# this workspace already has.
+dynamic-config = { workspace = true, features = ["json"] }

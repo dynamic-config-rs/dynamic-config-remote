@@ -162,6 +162,170 @@ fn a_key_that_is_not_there_is_a_remote_error() {
 }
 
 // ---------------------------------------------------------------------------
+// Several keys as one document
+// ---------------------------------------------------------------------------
+
+use dynamic_config::Value;
+use dynamic_config_consul::Keys;
+
+/// Starts Consul and writes every `(key, value)` pair into it.
+fn consul_holding(pairs: &[(&str, &str)]) -> Running {
+    let running = consul_with(pairs[0].0, pairs[0].1);
+
+    for (key, value) in &pairs[1..] {
+        let response = ureq::put(&format!("{}/v1/kv/{key}", running.address))
+            .send(*value)
+            .expect("writing the key should succeed");
+
+        assert!(response.status().is_success(), "{}", response.status());
+    }
+
+    running
+}
+
+/// The rule a named list inherits from a list of `.file(..)` calls: call
+/// order, and the later key wins.
+#[test]
+fn named_keys_merge_in_call_order_and_the_later_one_wins() {
+    let consul = consul_holding(&[
+        (
+            "myapp/base.json",
+            r#"{"db": {"host": "base", "port": 5432}}"#,
+        ),
+        ("myapp/local.json", r#"{"db": {"port": 6432}}"#),
+    ]);
+
+    let source = Consul::new(
+        &consul.address,
+        Keys::several(["myapp/base.json", "myapp/local.json"]),
+    );
+
+    let fetched = source.fetch().expect("both keys are there");
+    let merged = Value::parse(&fetched.text, Format::Json).unwrap();
+
+    assert_eq!(
+        merged.get("db.host"),
+        Some(&Value::String("base".to_owned())),
+        "a key the later document never mentions survives"
+    );
+    assert_eq!(
+        merged.get("db.port"),
+        Some(&Value::Integer(6432)),
+        "and the later document wins where they meet"
+    );
+}
+
+/// The other half, through Consul's own `?recurse`: one request, the whole
+/// subtree, folded into one document.
+#[test]
+fn a_prefix_folds_its_sections_into_one_document() {
+    let consul = consul_holding(&[
+        ("myapp/db.json", r#"{"db": {"host": "db.internal"}}"#),
+        ("myapp/server.json", r#"{"server": {"port": 8080}}"#),
+        // Outside the prefix: proof the recursion is bounded where it says.
+        ("other/db.json", r#"{"db": {"host": "wrong"}}"#),
+    ]);
+
+    let source = Consul::new(&consul.address, Keys::prefix("myapp/")).with_format(Format::Json);
+
+    let fetched = source.fetch().expect("the subtree is readable");
+    let merged = Value::parse(&fetched.text, Format::Json).unwrap();
+
+    assert_eq!(
+        merged.get("db.host"),
+        Some(&Value::String("db.internal".to_owned()))
+    );
+    assert_eq!(merged.get("server.port"), Some(&Value::Integer(8080)));
+}
+
+/// A prefix says "these are disjoint sections". Two of them supplying one path
+/// is a deployment bug, named rather than resolved — and named by path, never
+/// by value.
+#[test]
+fn two_keys_under_a_prefix_supplying_one_path_are_refused_by_name() {
+    let consul = consul_holding(&[
+        ("clash/db.json", r#"{"db": {"password": "hunter2-first"}}"#),
+        (
+            "clash/extra.json",
+            r#"{"db": {"password": "hunter2-second"}}"#,
+        ),
+    ]);
+
+    let source = Consul::new(&consul.address, Keys::prefix("clash/")).with_format(Format::Json);
+
+    let error = source.fetch().expect_err("both keys supply db.password");
+    let printed = format!("{error} {error:?}");
+
+    assert!(printed.contains("clash/db.json"), "{printed}");
+    assert!(printed.contains("clash/extra.json"), "{printed}");
+    assert!(printed.contains("db.password"), "{printed}");
+    assert!(
+        !printed.contains("hunter2"),
+        "a collision report names paths and never values: {printed}"
+    );
+}
+
+/// Fail-whole, not merge-what-came-back: a configuration quietly missing a
+/// section is worse than a refresh that failed and left the last one serving.
+#[test]
+fn one_unreadable_key_fails_the_whole_fetch_and_names_it() {
+    let consul = consul_holding(&[("partial/db.json", r#"{"db": {"host": "here"}}"#)]);
+
+    let source = Consul::new(
+        &consul.address,
+        Keys::several(["partial/db.json", "partial/absent.json"]),
+    );
+
+    let error = source.fetch().expect_err("one of the two is not there");
+
+    assert_eq!(error.kind(), dynamic_config::ErrorKind::Remote);
+    assert!(error.to_string().contains("partial/absent.json"), "{error}");
+}
+
+/// The end of the feature: a merged document is a document, and loads like one.
+#[test]
+fn a_merged_document_loads_into_a_struct() {
+    use serde::Deserialize;
+
+    #[derive(Debug, Deserialize, PartialEq)]
+    struct Db {
+        host: String,
+        port: u16,
+    }
+
+    let consul = consul_holding(&[
+        ("split/host.json", r#"{"db": {"host": "db.internal"}}"#),
+        ("split/port.json", r#"{"db": {"port": 6432}}"#),
+    ]);
+
+    let source = Consul::new(&consul.address, Keys::prefix("split/")).with_format(Format::Json);
+    let fetched = source.fetch().unwrap();
+
+    let sources = [dynamic_config::Source::inline(
+        &fetched.text,
+        fetched.format,
+    )];
+    let db: Db = dynamic_config::load(&dynamic_config::LoadSpec::new("db", &sources))
+        .expect("two keys became one document");
+
+    assert_eq!(
+        db,
+        Db {
+            host: "db.internal".to_owned(),
+            port: 6432,
+        }
+    );
+
+    // Provenance is store-grained from here on: one layer, so `source_of`
+    // answers with the store and the set it read.
+    assert!(
+        source.describe().contains("prefix split/"),
+        "{}",
+        source.describe()
+    );
+}
+
+// ---------------------------------------------------------------------------
 // Watching
 // ---------------------------------------------------------------------------
 
@@ -401,7 +565,10 @@ fn a_management_token_reads_what_the_anonymous_one_cannot() {
         .fetch()
         .expect_err("default_policy is deny");
 
-    assert_eq!(refused.kind(), dynamic_config::ErrorKind::Remote);
+    // `Auth`, not `Remote`: the agent answered, and what it said was no. A
+    // caller can stop rather than back off, because waiting will not grant
+    // the anonymous token a policy it does not have.
+    assert_eq!(refused.kind(), dynamic_config::ErrorKind::Auth);
 
     let allowed = Consul::new(&consul.address, "myapp/secured.json")
         .with_token("root-token")
@@ -504,6 +671,178 @@ fn a_deleted_key_is_not_reported_as_a_change() {
         .recv_timeout(Duration::from_secs(10))
         .expect("the key's return should be noticed");
     assert!(document.text.contains("back"), "{}", document.text);
+
+    watch.stop();
+    thread
+        .join()
+        .expect("the loop should end")
+        .expect("cleanly");
+}
+
+// ---------------------------------------------------------------------------
+// Watching a subtree
+// ---------------------------------------------------------------------------
+
+use base64::Engine;
+
+/// Writes both halves of the set at one index, through Consul's transaction
+/// endpoint.
+///
+/// Atomic on purpose: it takes a torn *write* off the table, so a delivery
+/// whose halves disagree can only be a torn *read* — which is the thing under
+/// test.
+fn stamp_together(address: &str, generation: u64) {
+    let operations: Vec<String> = [
+        (
+            "stamped/db.json",
+            format!(r#"{{"db": {{"generation": {generation}}}}}"#),
+        ),
+        (
+            "stamped/server.json",
+            format!(r#"{{"server": {{"generation": {generation}}}}}"#),
+        ),
+    ]
+    .iter()
+    .map(|(key, document)| {
+        let encoded = base64::engine::general_purpose::STANDARD.encode(document);
+
+        format!(r#"{{"KV": {{"Verb": "set", "Key": "{key}", "Value": "{encoded}"}}}}"#)
+    })
+    .collect();
+
+    let response = ureq::put(&format!("{address}/v1/txn"))
+        .send(format!("[{}]", operations.join(",")))
+        .expect("the transaction should be accepted");
+
+    assert!(response.status().is_success(), "{}", response.status());
+}
+
+/// The property a watch on a set exists to have: **every delivery agrees with
+/// itself**.
+///
+/// One generation is stamped into both sections of the subtree, in one Consul
+/// transaction, so every index the agent ever holds has the two halves equal. A
+/// watch that woke on the subtree and then read it back key by key — or read it
+/// back at all, with a second transaction landing in between — would eventually
+/// deliver `db.generation` from one write beside `server.generation` from
+/// another: a document that never existed at any index. A recursive blocking
+/// query has no such window, because its own answer is the document, and this
+/// is the test that would catch that going away.
+#[test]
+fn a_prefix_watch_never_delivers_a_document_that_never_existed() {
+    let consul = consul_holding(&[
+        ("stamped/db.json", r#"{"db": {"generation": 0}}"#),
+        ("stamped/server.json", r#"{"server": {"generation": 0}}"#),
+    ]);
+
+    let source = Consul::new(&consul.address, Keys::prefix("stamped/"))
+        .with_format(Format::Json)
+        .with_wait(Duration::from_secs(10));
+
+    let watch = RemoteWatch::new();
+    let watching = watch.watching();
+    let (sender, receiver) = mpsc::channel();
+
+    let thread = std::thread::spawn(move || {
+        source.watch(&watching, move |document| {
+            let _ = sender.send(document.text);
+            Ok(())
+        })
+    });
+
+    // The first query carries index 0 and returns at once, so the loop is
+    // parked on a real blocking query within a moment.
+    std::thread::sleep(Duration::from_millis(500));
+
+    for generation in 1..=6 {
+        stamp_together(&consul.address, generation);
+
+        // Enough for the parked query to return and the next one to be
+        // issued; a run that coalesces two writes is fine, and is why the
+        // assertion below is on the highest generation rather than a count.
+        std::thread::sleep(Duration::from_millis(150));
+    }
+
+    let mut seen = 0;
+    let mut highest = 0;
+
+    while let Ok(text) = receiver.recv_timeout(Duration::from_secs(10)) {
+        let tree = Value::parse(&text, Format::Json).expect("every delivery is a document");
+
+        let db = tree.get("db.generation").cloned();
+        let server = tree.get("server.generation").cloned();
+
+        assert_eq!(
+            db, server,
+            "a delivery whose two halves disagree is a document that never \
+             existed at any index: {text}"
+        );
+
+        if let Some(Value::Integer(generation)) = db {
+            highest = highest.max(generation);
+        }
+
+        seen += 1;
+
+        if highest == 6 {
+            break;
+        }
+    }
+
+    assert!(seen > 0, "the watcher must have delivered something");
+    assert_eq!(highest, 6, "and must have caught up to the last write");
+
+    watch.stop();
+    thread
+        .join()
+        .expect("the loop should end")
+        .expect("cleanly");
+}
+
+/// A key leaving the subtree changes the set, so the document that follows is
+/// simply the sections that are left — the same answer `fetch` would give.
+#[test]
+fn a_deletion_under_a_watched_prefix_is_a_change_to_the_set() {
+    let consul = consul_holding(&[
+        ("shrinking/db.json", r#"{"db": {"host": "db.internal"}}"#),
+        ("shrinking/server.json", r#"{"server": {"port": 8080}}"#),
+        ("shrinking/extra.json", r#"{"extra": {"on": true}}"#),
+    ]);
+
+    let source = Consul::new(&consul.address, Keys::prefix("shrinking/"))
+        .with_format(Format::Json)
+        .with_wait(Duration::from_secs(10));
+
+    let watch = RemoteWatch::new();
+    let watching = watch.watching();
+    let (sender, receiver) = mpsc::channel();
+
+    let thread = std::thread::spawn(move || {
+        source.watch(&watching, move |document| {
+            let _ = sender.send(document.text);
+            Ok(())
+        })
+    });
+
+    std::thread::sleep(Duration::from_millis(500));
+
+    let response = ureq::delete(&format!("{}/v1/kv/shrinking/extra.json", consul.address))
+        .call()
+        .expect("deleting the key should succeed");
+    assert!(response.status().is_success());
+
+    let text = receiver
+        .recv_timeout(Duration::from_secs(10))
+        .expect("a key leaving the subtree is a change to the set");
+
+    let tree = Value::parse(&text, Format::Json).expect("it is a document");
+
+    assert_eq!(tree.get("extra.on"), None, "the deleted section is gone");
+    assert_eq!(
+        tree.get("server.port"),
+        Some(&Value::Integer(8080)),
+        "and the sections that remain are all there: {text}"
+    );
 
     watch.stop();
     thread

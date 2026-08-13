@@ -29,23 +29,19 @@
 //! Once, not in a loop: if a fresh token also gets `403`, the problem is the
 //! policy rather than the lease, and retrying would only turn a clear failure
 //! into a hang.
-
-use std::sync::Mutex;
-use std::time::{Duration, Instant};
+//!
+//! *When* a token is close enough to expiry to replace is [`Cached`]'s
+//! decision, shared
+//! with the Consul and Firestore crates. *Whether to renew or log in again* is
+//! Vault's alone — it is the only one of the three that can extend a lease —
+//! and so it stays here, in this module's `Session`.
 
 use dynamic_config::Error;
-
-/// How close to expiry a token may get before it is refreshed.
-///
-/// One name and one value across the three token-caching store crates, on
-/// purpose. The margin is also the only cushion against clock skew: expiry
-/// is computed from a *local* `Instant` plus a *server-reported* TTL, so any
-/// disagreement between the server's issue time and our receipt time eats
-/// into it. A minute absorbs the skew a real fleet actually has.
-const REFRESH_WITHIN: Duration = Duration::from_secs(60);
+use dynamic_config_store_core::credential::{Cached, Issued};
 
 /// Where a Kubernetes service-account token is mounted, by convention.
-pub const SERVICE_ACCOUNT_TOKEN: &str = "/var/run/secrets/kubernetes.io/serviceaccount/token";
+pub const SERVICE_ACCOUNT_TOKEN: &str =
+    dynamic_config_store_core::credential::SERVICE_ACCOUNT_TOKEN;
 
 /// How to obtain a Vault token.
 ///
@@ -367,39 +363,19 @@ impl std::fmt::Debug for Auth {
     }
 }
 
-/// A token, when it expires, and whether it can be renewed.
+/// A token and whether it can be renewed.
+///
+/// When it expires is not here: that is the one thing every token-caching
+/// store in this family says the same way, so [`Cached`] keeps it.
 #[derive(Clone)]
 pub(crate) struct Token {
     pub(crate) secret: String,
-    /// `None` for a token with no lease — a root token, or one Vault called
-    /// non-expiring.
-    expires: Option<Instant>,
     renewable: bool,
 }
 
 impl Token {
-    pub(crate) fn new(secret: String, lease: Option<Duration>, renewable: bool) -> Self {
-        Self {
-            secret,
-            // `checked_add` because the lease comes from the server: a `Vault`
-            // that answers with a nonsense `lease_duration` would otherwise
-            // panic the process on the arithmetic. A lease that does not fit in
-            // an `Instant` is treated as no expiry, which is what a number that
-            // large means anyway.
-            expires: lease.and_then(|lease| Instant::now().checked_add(lease)),
-            renewable,
-        }
-    }
-
-    /// Whether this token should be refreshed before the next request.
-    fn is_stale(&self) -> bool {
-        self.expires.is_some_and(|expires| {
-            expires.saturating_duration_since(Instant::now()) < REFRESH_WITHIN
-        })
-    }
-
-    fn renewable(&self) -> bool {
-        self.renewable
+    pub(crate) fn new(secret: String, renewable: bool) -> Self {
+        Self { secret, renewable }
     }
 }
 
@@ -407,83 +383,67 @@ impl std::fmt::Debug for Token {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Token")
             .field("secret", &"***")
-            .field("expires", &self.expires)
             .field("renewable", &self.renewable)
             .finish()
     }
 }
 
-/// The current token for one source.
+/// The current token for one source, and Vault's rule for replacing it.
 ///
-/// A `Mutex` rather than a lock-free cell: logging in twice concurrently is
-/// harmless but wasteful, and this is on the once-per-refresh path rather than
-/// the once-per-request one.
+/// The rule is Vault's alone: Consul issues login tokens and expects another
+/// login, and Firestore's metadata server cannot extend anything, so those two
+/// hand [`Cached`] a closure that simply obtains. This one first tries to
+/// extend the lease it already has.
 #[derive(Debug, Default)]
 pub(crate) struct Session {
-    token: Mutex<Option<Token>>,
+    held: Cached<Token>,
 }
 
 impl Session {
     pub(crate) const fn new() -> Self {
         Self {
-            token: Mutex::new(None),
+            held: Cached::new(),
         }
     }
 
     /// The token to use, logging in or renewing if it is time.
     ///
     /// `login` and `renew` are closures rather than methods so this module
-    /// stays free of HTTP: what it decides is *when*, not *how*.
+    /// stays free of HTTP: what it decides is *whether*, not *how*.
     ///
     /// # Errors
     ///
-    /// Whatever logging in or renewing reports.
+    /// Whatever logging in reports. A failed *renewal* is not an error: the
+    /// credentials are still here, so falling through to a fresh login is
+    /// strictly better than reporting something the caller can do nothing
+    /// about.
     pub(crate) fn token(
         &self,
-        login: impl Fn() -> Result<Token, Error>,
-        renew: impl Fn(&str) -> Result<Token, Error>,
+        login: impl Fn() -> Result<Issued<Token>, Error>,
+        renew: impl Fn(&str) -> Result<Issued<Token>, Error>,
     ) -> Result<String, Error> {
-        let mut slot = self.lock();
-
-        match slot.as_ref() {
-            Some(token) if !token.is_stale() => return Ok(token.secret.clone()),
-
-            // A renewal that fails is not a failure yet: the credentials are
-            // still here, so falling through to a fresh login is strictly
-            // better than reporting an error the caller can do nothing about.
-            Some(token) if token.renewable() => {
-                if let Ok(renewed) = renew(&token.secret) {
-                    let secret = renewed.secret.clone();
-                    *slot = Some(renewed);
-
-                    return Ok(secret);
-                }
-            }
-
-            _ => {}
-        }
-
-        let fresh = login()?;
-        let secret = fresh.secret.clone();
-        *slot = Some(fresh);
-
-        Ok(secret)
+        self.held
+            .get(|current| match current {
+                Some(token) if token.renewable => renew(&token.secret).or_else(|_| login()),
+                // Nothing held, nothing renewable, or a token thrown away by
+                // `invalidate` — all of them mean a fresh login.
+                _ => login(),
+            })
+            .map(|token| token.secret)
     }
 
     /// Throws the current token away, so the next request logs in again.
     pub(crate) fn invalidate(&self) {
-        *self.lock() = None;
-    }
-
-    fn lock(&self) -> std::sync::MutexGuard<'_, Option<Token>> {
-        self.token
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
+        self.held.invalidate();
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use std::time::Duration;
+
+    use dynamic_config_store_core::credential::REFRESH_WITHIN;
+
     use super::*;
 
     #[test]
@@ -554,82 +514,20 @@ mod tests {
         assert!(error.to_string().contains("/no/such/token"), "{error}");
     }
 
-    #[test]
-    fn a_lease_too_large_to_represent_is_treated_as_no_expiry() {
-        // A server answering with nonsense must not be able to panic the
-        // process on `Instant + Duration`.
-        let token = Token::new("t".to_owned(), Some(Duration::from_secs(u64::MAX)), true);
-
-        assert!(!token.is_stale());
+    /// A token issued with `lease`, the way `token_from` builds one.
+    fn issued(secret: &str, lease: Option<Duration>, renewable: bool) -> Issued<Token> {
+        Issued {
+            value: Token::new(secret.to_owned(), renewable),
+            ttl: lease,
+        }
     }
 
-    #[test]
-    fn a_token_with_no_lease_is_never_stale() {
-        let token = Token::new("t".to_owned(), None, false);
-
-        assert!(!token.is_stale(), "a root token does not expire");
-    }
-
-    #[test]
-    fn a_token_near_its_expiry_is_stale() {
-        let fresh = Token::new("t".to_owned(), Some(Duration::from_secs(3600)), true);
-        let expiring = Token::new("t".to_owned(), Some(REFRESH_WITHIN / 2), true);
-
-        assert!(!fresh.is_stale());
-        assert!(expiring.is_stale(), "it would expire mid-request");
-    }
-
-    #[test]
-    fn a_session_logs_in_once_and_then_reuses_the_token() {
-        use std::sync::atomic::{AtomicUsize, Ordering};
-
-        let logins = AtomicUsize::new(0);
-        let session = Session::new();
-
-        let login = || {
-            logins.fetch_add(1, Ordering::SeqCst);
-
-            Ok(Token::new(
-                "token".to_owned(),
-                Some(Duration::from_secs(3600)),
-                true,
-            ))
-        };
-        let renew = |_: &str| panic!("a fresh token needs no renewal");
-
-        assert_eq!(session.token(login, renew).unwrap(), "token");
-        assert_eq!(session.token(login, renew).unwrap(), "token");
-        assert_eq!(logins.load(Ordering::SeqCst), 1);
-    }
-
-    #[test]
-    fn invalidating_forces_another_login() {
-        use std::sync::atomic::{AtomicUsize, Ordering};
-
-        let logins = AtomicUsize::new(0);
-        let session = Session::new();
-
-        let login = || {
-            let count = logins.fetch_add(1, Ordering::SeqCst);
-
-            Ok(Token::new(
-                format!("token-{count}"),
-                Some(Duration::from_secs(3600)),
-                true,
-            ))
-        };
-        let renew = |_: &str| panic!("not reached");
-
-        assert_eq!(session.token(login, renew).unwrap(), "token-0");
-
-        session.invalidate();
-
-        assert_eq!(
-            session.token(login, renew).unwrap(),
-            "token-1",
-            "a 403 must be able to force a fresh login"
-        );
-    }
+    // When a token is stale, what a lease too large to represent means, that
+    // a login happens once rather than per request, and that `invalidate`
+    // forces another are `dynamic-config-store-core`'s tests now: they were
+    // the same assertions here, in the Consul crate and in the Firestore
+    // crate, over the same code. What stays is what Vault does and the other
+    // two cannot — renew.
 
     #[test]
     fn a_stale_renewable_token_is_renewed_rather_than_replaced() {
@@ -641,20 +539,12 @@ mod tests {
         let expiring = || {
             logins.fetch_add(1, Ordering::SeqCst);
 
-            Ok(Token::new(
-                "first".to_owned(),
-                Some(REFRESH_WITHIN / 2),
-                true,
-            ))
+            Ok(issued("first", Some(REFRESH_WITHIN / 2), true))
         };
         let renew = |secret: &str| {
             assert_eq!(secret, "first", "renewal presents the token it is renewing");
 
-            Ok(Token::new(
-                "renewed".to_owned(),
-                Some(Duration::from_secs(3600)),
-                true,
-            ))
+            Ok(issued("renewed", Some(Duration::from_secs(3600)), true))
         };
 
         assert_eq!(session.token(expiring, renew).unwrap(), "first");
@@ -670,13 +560,7 @@ mod tests {
     fn a_failed_renewal_falls_back_to_logging_in_again() {
         let session = Session::new();
 
-        let login = || {
-            Ok(Token::new(
-                "fresh".to_owned(),
-                Some(REFRESH_WITHIN / 2),
-                true,
-            ))
-        };
+        let login = || Ok(issued("fresh", Some(REFRESH_WITHIN / 2), true));
         let refuse = |_: &str| Err(Error::remote("the lease is gone"));
 
         assert_eq!(session.token(login, refuse).unwrap(), "fresh");
@@ -691,16 +575,48 @@ mod tests {
     fn a_stale_non_renewable_token_goes_straight_to_a_fresh_login() {
         let session = Session::new();
 
-        let login = || {
-            Ok(Token::new(
-                "fresh".to_owned(),
-                Some(REFRESH_WITHIN / 2),
-                false,
-            ))
-        };
+        let login = || Ok(issued("fresh", Some(REFRESH_WITHIN / 2), false));
         let renew = |_: &str| panic!("a non-renewable token must not be renewed");
 
         assert_eq!(session.token(login, renew).unwrap(), "fresh");
         assert_eq!(session.token(login, renew).unwrap(), "fresh");
+    }
+
+    /// A renewal that fails must not be able to lose the token: the fresh
+    /// login that follows is what the caller ends up presenting, and if
+    /// *that* fails too the previous token has to still be there.
+    #[test]
+    fn a_login_that_fails_after_a_failed_renewal_keeps_the_token_it_had() {
+        let session = Session::new();
+
+        assert_eq!(
+            session
+                .token(
+                    || Ok(issued("first", Some(REFRESH_WITHIN / 2), true)),
+                    |_: &str| panic!("nothing to renew yet"),
+                )
+                .unwrap(),
+            "first"
+        );
+
+        let error = session
+            .token(
+                || Err(Error::auth("the role is gone")),
+                |_: &str| Err(Error::remote("the lease is gone")),
+            )
+            .expect_err("neither renewing nor logging in worked");
+
+        assert!(error.to_string().contains("the role is gone"), "{error}");
+
+        session
+            .token(
+                || panic!("the token that is still held is renewed, not replaced"),
+                |secret: &str| {
+                    assert_eq!(secret, "first");
+
+                    Ok(issued("renewed", Some(Duration::from_secs(3600)), true))
+                },
+            )
+            .unwrap();
     }
 }

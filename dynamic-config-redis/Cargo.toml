@@ -27,13 +27,20 @@ tls = ["redis/tls-rustls"]
 # Redis speaks a plain request/response protocol, so this implements the
 # blocking trait: no runtime needed to use it.
 dynamic-config = { workspace = true }
+dynamic-config-store-core = { workspace = true }
 redis = { version = "1.5", default-features = false }
 
 [dev-dependencies]
 dynamic-config = { workspace = true, features = ["json"] }
 testcontainers = { version = "0.27", features = ["blocking"] }
 testcontainers-modules = { version = "0.15", features = ["redis"] }
-serde = { version = "1.0.210", features = ["derive"] }
+# A self-signed certificate authority, generated in the test. TLS is the one
+# feature whose tests cannot use a fixture: a certificate expires, and a
+# committed one turns into a suite that fails on a date nobody chose. Dev-only,
+# so it is in no build a user of this crate produces.
+rcgen = "0.14"
+
+serde = { version = "1.0.221", features = ["derive"] }
 
 [package.metadata.docs.rs]
 all-features = true

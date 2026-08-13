@@ -10,7 +10,7 @@
 
 use async_nats::jetstream::kv::Config;
 use dynamic_config::{AsyncRemoteSource, Format};
-use dynamic_config_nats::Nats;
+use dynamic_config_nats::{Keys, Nats};
 use testcontainers::ImageExt;
 use testcontainers_modules::nats::{Nats as NatsImage, NatsServerCmd};
 
@@ -144,6 +144,112 @@ async fn the_document_loads_into_a_struct() {
             host: "db.internal".to_owned(),
             port: 6432,
         }
+    );
+}
+
+/// The rule a list of keys inherits from a list of files: call order, and the
+/// later key wins. One get per key, because the KV API has no batch read.
+#[tokio::test]
+async fn several_keys_merge_in_call_order_and_the_later_key_wins() {
+    let nats = nats_with(Some((
+        "base.json",
+        r#"{"db": {"host": "shared", "port": 5432}}"#,
+    )))
+    .await;
+
+    nats.store
+        .put("local.json", r#"{"db": {"host": "override"}}"#.into())
+        .await
+        .expect("writing the second key should succeed");
+
+    let source = Nats::new(
+        &nats.server,
+        BUCKET,
+        Keys::several(["base.json", "local.json"]),
+    )
+    .await
+    .expect("the bucket exists");
+
+    let fetched = source.fetch().await.expect("both keys are there");
+
+    assert_eq!(fetched.format, Format::Json);
+
+    // Asserted on the text rather than through a parser: what the loader gets
+    // is these bytes, and a merge that produced the right tree and the wrong
+    // rendering would still be a broken fetch.
+    assert!(
+        fetched.text.contains("override") && !fetched.text.contains("shared"),
+        "the later key wins: {}",
+        fetched.text
+    );
+    assert!(
+        fetched.text.contains("5432"),
+        "a value only the earlier key has survives the merge: {}",
+        fetched.text
+    );
+}
+
+/// One unreadable key fails the whole fetch, naming it: a configuration
+/// quietly missing a section is worse than a refresh that failed and left the
+/// last document serving.
+#[tokio::test]
+async fn one_missing_key_in_a_list_fails_the_whole_fetch() {
+    // The key that *does* answer holds a secret, because this error path has
+    // a fetched document in its hands and a diagnostic here names keys and
+    // never values.
+    let nats = nats_with(Some((
+        "present.json",
+        r#"{"db": {"password": "hunter2-nats-value"}}"#,
+    )))
+    .await;
+
+    let source = Nats::new(
+        &nats.server,
+        BUCKET,
+        Keys::several(["present.json", "absent.json"]),
+    )
+    .await
+    .unwrap();
+
+    let error = source.fetch().await.expect_err("the second key is absent");
+
+    assert_eq!(error.kind(), dynamic_config::ErrorKind::Remote);
+
+    let printed = format!("{error} {error:?} {source:?}");
+
+    assert!(printed.contains("absent.json"), "{printed}");
+    assert!(!printed.contains("hunter2"), "{printed}");
+}
+
+/// A watch delivers the document that changed, and a merged document has no
+/// single key that changed. Refused at `watch`, so it fails now rather than
+/// in six hours by delivering half a set.
+#[tokio::test]
+async fn a_multi_key_source_refuses_to_be_watched_and_says_what_to_do_instead() {
+    let nats = nats_with(Some(("base.json", r#"{"db": {"host": "shared"}}"#))).await;
+
+    nats.store
+        .put("local.json", r#"{"db": {"host": "override"}}"#.into())
+        .await
+        .unwrap();
+
+    let source = Nats::new(
+        &nats.server,
+        BUCKET,
+        Keys::several(["base.json", "local.json"]),
+    )
+    .await
+    .unwrap();
+
+    let error = source
+        .watch(|_| Ok(()))
+        .await
+        .expect_err("a merged document has no one key to watch");
+
+    assert!(error.to_string().contains("several keys"), "{error}");
+    assert!(
+        error.to_string().contains("refresh_remote_async"),
+        "{error}"
     );
 }
 
@@ -378,5 +484,177 @@ async fn a_source_can_share_a_client_the_program_already_has() {
         source.describe().contains("an existing connection"),
         "an error should not name a server this source never dialled: {}",
         source.describe()
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Reporting a watch that is failing
+//
+// The half of a store `dynamic-config` cannot see. A delivery keeps
+// `RemoteStatus` current, so a *working* watch needs none of this; a stream
+// that broke delivers nothing, and without `reporting_to` would say nothing
+// either — `remote_up` describing the last delivery rather than the last
+// attempt. `Nats` connects eagerly, so there is no server-free way to build
+// one: every test of this lives here.
+// ---------------------------------------------------------------------------
+
+use dynamic_config::{Remote, RemoteSink};
+
+/// A watch that was working, and a stream that breaks under it. `up` has to
+/// fall to zero *and* the last good read has to keep ageing: an alert wants
+/// both halves, and a failure that reset the staleness clock would hide the
+/// one that says how old the served document is.
+///
+/// The break is the **bucket going away**, not the server: `async-nats`
+/// recreates a dropped subscription indefinitely, so a server that stops
+/// answering is precisely the failure this client is built to ride out and the
+/// watch keeps waiting through it. A stream that is gone stops the idle
+/// heartbeats, and that is what reaches this crate as a failed watch — so it
+/// is the honest thing to break.
+#[tokio::test]
+async fn a_broken_stream_reports_the_store_as_unreachable_and_leaves_the_last_read_ageing() {
+    // Its own `static`, because a `RemoteSink` needs one and two tests sharing
+    // one would race.
+    static WATCHED: Remote = Remote::new();
+
+    fn reloaded() -> Result<(), dynamic_config::Error> {
+        Ok(())
+    }
+
+    let nats = nats_with(Some(("reported.json", r#"{"db": {"host": "first"}}"#))).await;
+
+    // A real pull first, so `last_fetch` holds something the failure that
+    // follows must not disturb.
+    WATCHED.set_async(
+        Nats::new(&nats.server, BUCKET, "reported.json")
+            .await
+            .expect("the bucket exists"),
+    );
+    WATCHED.refresh_async().await.expect("the key is there");
+
+    let before = WATCHED.status();
+
+    assert_eq!(before.reachable(), Some(true), "the store just answered");
+    assert!(before.last_fetch.is_some());
+
+    let source = Nats::new(&nats.server, BUCKET, "reported.json")
+        .await
+        .expect("the bucket exists")
+        .reporting_to(RemoteSink::new(&WATCHED, reloaded, "nats"));
+
+    let (sender, mut receiver) = tokio::sync::mpsc::unbounded_channel();
+
+    let watch = tokio::spawn(async move {
+        source
+            .watch(move |document| {
+                let _ = sender.send(document);
+                Ok(())
+            })
+            .await
+    });
+
+    // Establish the watch by proving a put gets through first: breaking a
+    // stream that does not exist yet would prove nothing about a stream.
+    tokio::time::timeout(std::time::Duration::from_secs(20), async {
+        loop {
+            nats.store
+                .put("reported.json", r#"{"db": {"host": "second"}}"#.into())
+                .await
+                .unwrap();
+
+            if tokio::time::timeout(std::time::Duration::from_millis(300), receiver.recv())
+                .await
+                .is_ok()
+            {
+                return;
+            }
+        }
+    })
+    .await
+    .expect("the watch should be running by now");
+
+    // The bucket goes away under a running watch. This is the state that used
+    // to be invisible: the loop stops delivering, and the status would have
+    // gone on describing the delivery it made a moment ago.
+    let client = async_nats::connect(&nats.server)
+        .await
+        .expect("the server is still up; it is the bucket that goes");
+
+    async_nats::jetstream::new(client)
+        .delete_key_value(BUCKET)
+        .await
+        .expect("deleting the bucket should succeed");
+
+    // The consumer's idle heartbeats are five seconds apart and the client
+    // gives up after two of them, so the failure arrives about ten seconds
+    // after the bucket does not.
+    let error = tokio::time::timeout(std::time::Duration::from_secs(90), watch)
+        .await
+        .expect("the watch should end when its stream does")
+        .expect("the watch task itself must not panic")
+        .expect_err("a watch never returns `Ok`");
+
+    let after = WATCHED.status();
+
+    assert_eq!(
+        after.reachable(),
+        Some(false),
+        "a watch that cannot reach its store is a store that is not \
+         answering, and nothing else was going to say so: {error}"
+    );
+    assert!(after.consecutive_failures >= 1, "{after:?}");
+    assert_eq!(
+        after.last_fetch, before.last_fetch,
+        "the last *good* read has to keep ageing, or the staleness alert \
+         resets every time the store fails"
+    );
+    assert_eq!(
+        after.fetches, before.fetches,
+        "an attempt that returned nothing is not a fetch"
+    );
+    assert!(
+        !format!("{after:?}").contains("127.0.0.1"),
+        "a store's address never enters a status: {after:?}"
+    );
+}
+
+/// A refusal that arrives before the first change is reported too, and for the
+/// same reason: a watch is spawned and its handle usually dropped, so a
+/// configuration that will never update again must not read as healthy.
+#[tokio::test]
+async fn a_refusal_at_the_door_is_reported_rather_than_left_to_a_dropped_handle() {
+    static REFUSED: Remote = Remote::new();
+
+    fn reloaded() -> Result<(), dynamic_config::Error> {
+        Ok(())
+    }
+
+    let nats = nats_with(Some(("base.json", r#"{"db": {"host": "shared"}}"#))).await;
+
+    nats.store
+        .put("local.json", r#"{"db": {"host": "override"}}"#.into())
+        .await
+        .unwrap();
+
+    let source = Nats::new(
+        &nats.server,
+        BUCKET,
+        Keys::several(["base.json", "local.json"]),
+    )
+    .await
+    .unwrap()
+    .reporting_to(RemoteSink::new(&REFUSED, reloaded, "nats"));
+
+    let error = source
+        .watch(|_| Ok(()))
+        .await
+        .expect_err("a merged document has no one key to watch");
+
+    assert!(error.to_string().contains("several keys"), "{error}");
+    assert_eq!(REFUSED.status().reachable(), Some(false));
+    assert_eq!(
+        REFUSED.status().fetches,
+        0,
+        "an attempt that returned nothing is not a fetch"
     );
 }

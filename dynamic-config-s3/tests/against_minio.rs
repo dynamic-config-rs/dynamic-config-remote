@@ -12,7 +12,7 @@
 use std::time::Duration;
 
 use dynamic_config::{AsyncRemoteSource, Format, RemoteWatch};
-use dynamic_config_s3::{Client, S3};
+use dynamic_config_s3::{Client, Keys, S3};
 use testcontainers_modules::minio::MinIO;
 
 const BUCKET: &str = "config";
@@ -148,6 +148,144 @@ async fn the_document_loads_into_a_struct() {
             port: 6432
         }
     );
+}
+
+/// The rule a list of keys inherits from a list of files: call order, and the
+/// later key wins. One `GetObject` per key, because S3 has no batch read.
+#[tokio::test]
+async fn several_keys_merge_in_call_order_and_the_later_key_wins() {
+    let minio = minio_with(
+        "prod/base.json",
+        r#"{"db": {"host": "shared", "port": 5432}}"#,
+    )
+    .await;
+    put(
+        &minio.client,
+        "prod/local.json",
+        r#"{"db": {"host": "override"}}"#,
+    )
+    .await;
+
+    let source = S3::from_client(
+        minio.client.clone(),
+        BUCKET,
+        Keys::several(["prod/base.json", "prod/local.json"]),
+    );
+
+    let fetched = source.fetch().await.expect("both objects are there");
+
+    assert_eq!(fetched.format, Format::Json);
+    assert!(
+        fetched.text.contains("override") && !fetched.text.contains("shared"),
+        "the later key wins: {}",
+        fetched.text
+    );
+    assert!(
+        fetched.text.contains("5432"),
+        "a value only the earlier key has survives: {}",
+        fetched.text
+    );
+}
+
+/// A prefix is the sections of a configuration, and `ListObjectsV2` finds
+/// them. The "folder" object a console leaves behind is not one of them.
+#[tokio::test]
+async fn a_prefix_folds_every_object_under_it_into_one_document() {
+    let minio = minio_with("prod/db.json", r#"{"db": {"host": "localhost"}}"#).await;
+    put(
+        &minio.client,
+        "prod/server.json",
+        r#"{"server": {"port": 8080}}"#,
+    )
+    .await;
+    // The zero-byte object a console makes when somebody creates a folder.
+    put(&minio.client, "prod/", "").await;
+    // And one outside the prefix, which must not be dragged in.
+    put(
+        &minio.client,
+        "staging/db.json",
+        r#"{"db": {"host": "elsewhere"}}"#,
+    )
+    .await;
+
+    let source = S3::from_client(minio.client.clone(), BUCKET, Keys::prefix("prod/"))
+        .with_format(Format::Json);
+
+    let fetched = source
+        .fetch()
+        .await
+        .expect("the prefix matches two documents");
+
+    assert!(fetched.text.contains("localhost"), "{}", fetched.text);
+    assert!(fetched.text.contains("8080"), "{}", fetched.text);
+    assert!(
+        !fetched.text.contains("elsewhere"),
+        "a key outside the prefix is not part of the set: {}",
+        fetched.text
+    );
+}
+
+/// Under a prefix nobody wrote an order, so two objects supplying one path is
+/// a deployment bug — reported, naming both keys and the path, never a value.
+#[tokio::test]
+async fn two_objects_under_a_prefix_supplying_one_path_is_refused() {
+    let minio = minio_with("clash/db.json", r#"{"db": {"password": "hunter2-left"}}"#).await;
+    put(
+        &minio.client,
+        "clash/extra.json",
+        r#"{"db": {"password": "hunter2-right"}}"#,
+    )
+    .await;
+
+    let source = S3::from_client(minio.client.clone(), BUCKET, Keys::prefix("clash/"))
+        .with_format(Format::Json);
+
+    let error = source
+        .fetch()
+        .await
+        .expect_err("both objects supply db.password");
+
+    let printed = format!("{error} {error:?}");
+
+    assert!(printed.contains("clash/db.json"), "{printed}");
+    assert!(printed.contains("clash/extra.json"), "{printed}");
+    assert!(printed.contains("db.password"), "{printed}");
+    assert!(
+        !printed.contains("hunter2"),
+        "a collision report names paths and never values: {printed}"
+    );
+}
+
+/// A prefix that matches nothing is a missing configuration rather than an
+/// empty one.
+#[tokio::test]
+async fn a_prefix_that_matches_nothing_says_so() {
+    let minio = minio_with("prod/db.json", r#"{"db": {"host": "a"}}"#).await;
+
+    let source = S3::from_client(minio.client.clone(), BUCKET, Keys::prefix("nowhere/"))
+        .with_format(Format::Json);
+
+    let error = source.fetch().await.expect_err("nothing is under it");
+
+    assert!(error.to_string().contains("nothing matched"), "{error}");
+}
+
+/// One unreadable key fails the whole fetch, naming it: a configuration
+/// quietly missing a section is worse than a refresh that failed.
+#[tokio::test]
+async fn one_missing_key_in_a_list_fails_the_whole_fetch() {
+    let minio = minio_with("prod/present.json", r#"{"db": {"host": "a"}}"#).await;
+
+    let source = S3::from_client(
+        minio.client.clone(),
+        BUCKET,
+        Keys::several(["prod/present.json", "prod/absent.json"]),
+    );
+
+    let error = source.fetch().await.expect_err("the second key is absent");
+
+    assert_eq!(error.kind(), dynamic_config::ErrorKind::Remote);
+    assert!(error.to_string().contains("prod/absent.json"), "{error}");
 }
 
 #[tokio::test]
@@ -337,4 +475,111 @@ async fn an_unreachable_server_is_a_prompt_error_naming_the_endpoint() {
 
     assert_eq!(error.kind(), dynamic_config::ErrorKind::Remote);
     assert!(error.to_string().contains("127.0.0.1:9"), "{error}");
+}
+
+// ---------------------------------------------------------------------------
+// Reporting a failing watch
+//
+// One `#[dynamic_config]` type per test: the snapshot, the remote slot and the
+// sink's generation all live in statics keyed by the type, so two tests
+// sharing one would race and — worse — pass alone.
+// ---------------------------------------------------------------------------
+
+/// The failure nobody notices: a poll loop *survives* its failures by design,
+/// so a bucket that stopped answering an hour ago looks exactly like a
+/// configuration nobody has changed for an hour. Until this landed the status
+/// said the store was fine, because the last thing it heard about was a
+/// delivery.
+///
+/// The store is stopped rather than mocked: a poll failing against a real
+/// endpoint that has gone away is the failure this is for, and the assertion
+/// is a *pair* — `reachable()` goes to `Some(false)` while `last_fetch` keeps
+/// the instant the last document really arrived, so an alert can ask "down,
+/// and stale for how long".
+#[tokio::test]
+async fn a_poll_that_cannot_reach_the_bucket_reports_it_and_leaves_the_clock_running() {
+    use dynamic_config::dynamic_config;
+
+    #[dynamic_config]
+    #[derive(Debug, serde::Deserialize)]
+    struct Polled {
+        // Never read: this test is about the status the store records, not
+        // about the document.
+        #[allow(dead_code)]
+        host: String,
+    }
+
+    let minio = minio_with("polled.json", r#"{"db": {"host": "first"}}"#).await;
+
+    Polled::set_remote_async(S3::from_client(minio.client.clone(), BUCKET, "polled.json"));
+    Polled::refresh_remote_async()
+        .await
+        .expect("the store answers the first read");
+
+    // Taken after the source is installed, which is what fences it.
+    let sink = Polled::remote_sink();
+    let before = sink.status();
+
+    assert_eq!(before.reachable(), Some(true), "one fetch, and it answered");
+    assert!(before.last_fetch.is_some());
+
+    let watcher = S3::from_client(minio.client.clone(), BUCKET, "polled.json").reporting_to(sink);
+    let watch = RemoteWatch::new();
+    let watching = watch.watching();
+
+    let polling = tokio::spawn(async move {
+        watcher
+            .watch(&watching, Duration::from_millis(200), |_| Ok(()))
+            .await
+    });
+
+    // Let the first tick record the ETag, so the loop is genuinely watching
+    // rather than starting up when the store goes away.
+    tokio::time::sleep(Duration::from_millis(700)).await;
+
+    minio
+        ._container
+        .stop_with_timeout(Some(0))
+        .await
+        .expect("the container should stop");
+
+    let deadline = std::time::Instant::now() + Duration::from_secs(60);
+
+    while sink.status().consecutive_failures == 0 && std::time::Instant::now() < deadline {
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+
+    let after = sink.status();
+
+    assert!(
+        !polling.is_finished(),
+        "a failed check does not end the watch — which is exactly why \
+         reporting it is the only way anyone hears about it"
+    );
+    assert_eq!(
+        after.reachable(),
+        Some(false),
+        "a loop polling into the void is a store that is down"
+    );
+    assert_eq!(
+        after.last_fetch, before.last_fetch,
+        "the staleness clock keeps running: `last_fetch` is when a document \
+         last arrived, and a failed attempt is not one"
+    );
+    assert_eq!(
+        after.fetches, before.fetches,
+        "a failure is not a fetch, however it is counted elsewhere"
+    );
+    assert_eq!(
+        after
+            .last_failure
+            .as_ref()
+            .expect("a failure was recorded")
+            .kind,
+        dynamic_config::ErrorKind::Remote,
+        "a bucket that went away may yet come back"
+    );
+
+    watch.stop();
+    let _ = polling.await;
 }

@@ -19,6 +19,7 @@ exclude.workspace = true
 
 [dependencies]
 dynamic-config = { workspace = true }
+dynamic-config-store-core = { workspace = true }
 # A blocking HTTP client with no runtime attached, which is the whole reason
 # Vault gets the blocking trait: nothing here needs an executor.
 ureq = { version = "3.0.12", default-features = false, features = ["rustls", "json"] }
@@ -27,7 +28,25 @@ serde_json = "1.0.127"
 [dev-dependencies]
 testcontainers = { version = "0.27", features = ["blocking"] }
 testcontainers-modules = { version = "0.15", features = ["hashicorp_vault"] }
-serde = { version = "1.0.210", features = ["derive"] }
+# A self-signed certificate authority, generated in the test. TLS is the one
+# feature whose tests cannot use a fixture: a certificate expires, and a
+# committed one turns into a suite that fails on a date nobody chose. Dev-only,
+# so it is in no build a user of this crate produces.
+rcgen = "0.14"
+# A TLS *server* for the scripted-server tests, so the private-CA and
+# client-certificate paths are proved by a handshake rather than by inspecting
+# the configuration that was going to be handed to one. Already in the tree
+# under `ureq`; named here so a test can build a server with it. Dev-only.
+# `0.23.31`, shared across the workspace, and not a preference. Three
+# requirements meet here: `aws-lc-rs` as a feature name does not exist before
+# 0.23.2, `aws-smithy-http-client` requires `^0.23.31`, and
+# `dynamic-config-python-remote` puts every store and the server in one graph.
+# `-Z direct-minimal-versions` pins each direct declaration to its *own*
+# floor, so any floor below the union's maximum is a contradiction rather
+# than a lower bound.
+rustls = { version = "0.23.31", default-features = false, features = ["ring", "std"] }
+
+serde = { version = "1.0.221", features = ["derive"] }
 dynamic-config = { workspace = true, features = ["json"] }
 
 [package.metadata.docs.rs]

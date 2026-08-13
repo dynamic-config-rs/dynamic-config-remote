@@ -12,6 +12,20 @@ ignore = [
     # one example, so it is in no build a user of this crate produces. Revisit
     # if it ever becomes a vulnerability, or if actix drops it.
     { id = "RUSTSEC-2024-0436", reason = "unmaintained, not vulnerable; dev-only, via actix-web in an example" },
+    # `bincode 1.x` and `proc-macro-error2` are unmaintained rather than
+    # vulnerable — informational advisories again. Both arrive through
+    # `iai-callgrind`, the instruction-count harness, which is a
+    # dev-dependency of the core crate: `cargo tree -i` shows one path each
+    # and it ends at `benches/instructions.rs`. Nothing a user of this crate
+    # builds contains either. The harness is worth the two entries because
+    # instruction counts are the only performance gate a shared runner can
+    # actually hold; revisit if either advisory becomes a vulnerability, or
+    # when iai-callgrind moves to `bincode 2`. There is a second reason to
+    # keep watching it: cargo already reports `proc-macro-error2` as code a
+    # future Rust will reject (`cargo report future-incompatibilities`), so
+    # this dependency has an expiry date whatever RustSec says about it.
+    { id = "RUSTSEC-2025-0141", reason = "unmaintained, not vulnerable; dev-only, via iai-callgrind in a bench" },
+    { id = "RUSTSEC-2026-0173", reason = "unmaintained, not vulnerable; dev-only, via iai-callgrind-macros in a bench" },
     # The two `lru` advisories (an aliasing violation in `IterMut`, a
     # panic-safety use-after-free in `pop()`) are accepted on the GitHub
     # Dependabot tab with written reasons, not here: RustSec's copies either

@@ -27,6 +27,12 @@ redaction. A report of a value appearing in a log or an error message is a
 vulnerability. `dynamic-config/tests/security.rs` asserts each of these, and CI
 runs it as a job of its own.
 
+**The parsing surfaces are fuzzed.** The unit parsers, `Value` path lookup and
+the rule that decides whether a path touches a secret run under libFuzzer
+(`fuzz/`, built on every CI run and run on a weekly schedule). A crash or a
+redaction rule that answers differently for the same path is a finding: report
+it through the process above, with the reproducing input attached.
+
 **Files it writes are private from the moment they exist.** `save` and the
 last-known-good cache create their file `0600` on Unix — created that way, not
 chmodded afterwards — through a temporary path opened with `create_new`, so a
