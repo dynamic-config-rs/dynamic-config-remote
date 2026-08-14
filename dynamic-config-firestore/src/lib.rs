@@ -102,6 +102,39 @@
 //! Cloud Functions; for anything else, mint a token outside the process and
 //! hand it over with [`Auth::access_token`].
 //!
+//!
+//! # Every failure branch of the watch loop, and what it reports
+//!
+//! A watch is the half of a store `dynamic-config` cannot see, and
+//! [`reporting_to`](Firestore::reporting_to) is what lets it speak: the sink the
+//! loop already holds is told about every attempt that came back with
+//! nothing. Which attempts those are is a table rather than prose, because
+//! the question an operator asks is *which* silence is deliberate.
+//!
+//! Three rules decide the column, and they are the same three in all seven
+//! store crates:
+//!
+//! 1. **A failure the loop survives by retrying reports.** That is the case
+//!    the whole feature exists for: the stream is down, the last delivery is
+//!    old, and nothing else would ever say so out loud.
+//! 2. **A recovery that worked stays silent.** Only a delivery or a fetch
+//!    clears the streak, so reporting a five-minute token turning over on a
+//!    healthy cluster would drive `remote_up` to zero and leave it there.
+//! 3. **A refusal that never asked the store reports nowhere.** No format, a
+//!    key shape that cannot be watched, material that will not build a
+//!    client: `RemoteStatus::reachable()` is *whether the store answered the
+//!    last time it was asked*, and these never ask. They are returned to the
+//!    caller, who is the one holding the mistake — and a status cannot
+//!    correct them, since it carries a kind and a path and no message.
+//!
+//! | Branch | Reports |
+//! |---|---|
+//! | the source reads several documents, so it cannot be watched | no — rule 3: nothing has been asked of Firestore |
+//! | the read fails — a blip, an expired token, a document briefly unreachable | **yes**, and the loop waits out the interval |
+//! | the document has no `updateTime`, so a change could never be detected | **yes**, and the watch ends |
+//! | the first read, or an update time that has not moved | no — Firestore answered |
+//! | `on_change` refuses the document | no — Firestore answered; `apply` counted the delivery, and what the document did next is `ConfigStatus`'s half |
+//!
 //! [`dynamic-config`]: https://docs.rs/dynamic-config
 //! [`dynamic-config-vault`]: https://docs.rs/dynamic-config-vault
 
@@ -496,7 +529,9 @@ impl Firestore {
         // Refused before the first tick, so a multi-document source fails at
         // `watch` rather than never firing: the loop below treats a failed
         // read as a blip worth waiting out, which is right for a network and
-        // wrong for a configuration mistake.
+        // wrong for a configuration mistake. Returned and recorded nowhere:
+        // nothing has been asked of Firestore yet, and `reachable()` is
+        // *whether the store answered the last time it was asked*.
         self.single_path()?;
 
         let mut seen: Option<String> = None;

@@ -14,8 +14,8 @@ repository.workspace = true
 homepage.workspace = true
 documentation = "https://docs.rs/dynamic-config-server"
 authors.workspace = true
-categories.workspace = true
-keywords.workspace = true
+categories = ["config", "web-programming::http-server"]
+keywords = ["config", "server", "http", "hot-reload", "microservices"]
 exclude.workspace = true
 # The README carries a dependency snippet as well as an install line, because
 # the router *is* the API: a service already running axum mounts it rather

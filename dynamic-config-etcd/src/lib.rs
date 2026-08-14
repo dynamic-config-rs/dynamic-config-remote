@@ -131,6 +131,56 @@
 //! that stopped answering an hour ago reads as down without anything having to
 //! call `refresh_remote_async()`.
 //!
+//!
+//! # Every failure branch of the watch loop, and what it reports
+//!
+//! A watch is the half of a store `dynamic-config` cannot see, and
+//! [`reporting_to`](Etcd::reporting_to) is what lets it speak: the sink the
+//! loop already holds is told about every attempt that came back with
+//! nothing. Which attempts those are is a table rather than prose, because
+//! the question an operator asks is *which* silence is deliberate.
+//!
+//! Three rules decide the column, and they are the same three in all seven
+//! store crates:
+//!
+//! 1. **A failure the loop survives by retrying reports.** That is the case
+//!    the whole feature exists for: the stream is down, the last delivery is
+//!    old, and nothing else would ever say so out loud.
+//! 2. **A recovery that worked stays silent.** Only a delivery or a fetch
+//!    clears the streak, so reporting a five-minute token turning over on a
+//!    healthy cluster would drive `remote_up` to zero and leave it there.
+//! 3. **A refusal that never asked the store reports nowhere.** No format, a
+//!    key shape that cannot be watched, material that will not build a
+//!    client: `RemoteStatus::reachable()` is *whether the store answered the
+//!    last time it was asked*, and these never ask. They are returned to the
+//!    caller, who is the one holding the mistake — and a status cannot
+//!    correct them, since it carries a kind and a path and no message.
+//!
+//! | Branch | Reports |
+//! |---|---|
+//! | the format is missing, or the source names a list of keys | no — rule 3: nothing has been asked of the cluster |
+//! | the stream cannot be established | **yes** — the first round trip |
+//! | …because the token had expired, and the refresh worked | no — the store answered, the credential was replaced, and the resumed stream lost no event |
+//! | …and the refresh, the re-establish, or the recovery cap fails | **yes** |
+//! | the stream errors for any other reason | **yes**, and the watch ends |
+//! | etcd cancels the watch — a compacted revision, usually | **yes**, and the watch ends |
+//! | a prefix batch's range read fails (one token refresh and retry first) | **yes** |
+//! | two keys under a prefix supply one path | **yes** — the read failed, not the callback |
+//! | the value is not UTF-8 | **yes** — the same failure a `fetch` of it would have recorded |
+//! | a progress notification, or an event that is not a `Put` | no — nothing changed |
+//! | a single key was deleted, or the last key under a prefix went away | no — see the note below |
+//! | `on_change` refuses the document | no — the store answered; `apply` counted the delivery, and what the document did next is `ConfigStatus`'s half |
+//! | the stream ends without an error | **yes** — a watch that stops quietly is a configuration that stops updating quietly |
+//!
+//! **The deletion row is a difference between stores, deliberately left
+//! standing.** Here and in `dynamic-config-redis` a key holding nothing leaves
+//! the running snapshot alone and says nothing, because the store is answering
+//! and only a delivery clears a streak — reporting it would park `remote_up`
+//! at zero for as long as nobody recreated the key. `dynamic-config-consul`
+//! records it as a failed attempt instead, on the argument that a `fetch` of
+//! the same key fails. Both are defensible, both are written down at the
+//! branch, and neither moves in a patch release.
+//!
 //! [`dynamic-config`]: https://docs.rs/dynamic-config
 
 #![forbid(unsafe_code)]
@@ -682,7 +732,11 @@ impl Etcd {
     where
         F: FnMut(Fetched) -> Result<(), Error> + Send,
     {
-        let format = self.format().map_err(|error| self.failing(error))?;
+        // Returned and recorded nowhere: nothing has been asked of the
+        // cluster yet, and `RemoteStatus::reachable()` is *whether the store
+        // answered the last time it was asked*. Everything below the first
+        // round trip reports; see the table in this crate's documentation.
+        let format = self.format()?;
 
         if let Keys::Several(_) = &self.keys {
             // Refused rather than approximated. etcd's watch is established on
@@ -692,17 +746,18 @@ impl Etcd {
             // a set has to answer. A prefix is one stream over one range and
             // answers it, which is why that shape is the one that landed.
             //
-            // Reported like every other end of a watch: this one is spawned
-            // and its handle usually dropped, so a refusal nobody is holding
-            // would leave a configuration frozen with nothing said.
-            return Err(self.failing(Error::remote(format!(
+            // Not reported: this refusal is about the *source*, and no
+            // request has left the process. A status saying the cluster is
+            // unreachable would be untrue, and it carries no message to
+            // correct the operator reading it with.
+            return Err(Error::remote(format!(
                 "{}: a source that reads a named list of keys cannot be \
                  watched; etcd establishes a watch on a key or a range, so a \
                  list would be one stream per key and none of them would say \
                  the set moved together — watch a prefix, or poll \
                  `refresh_remote_async()` on a timer, which is one round trip",
                 self.describe()
-            ))));
+            )));
         }
 
         let mut stream = match self.watch_once(None).await {
@@ -1660,11 +1715,20 @@ mod tests {
         );
     }
 
-    /// A refusal that arrives before the first round trip is reported too, and
-    /// for the same reason: the watch was spawned, the handle was dropped, and
-    /// a configuration that will never update again should not read as healthy.
+    /// A refusal that arrives *before the first round trip* is not reported,
+    /// and this test used to assert the opposite.
+    ///
+    /// 0.6.1's audit of all seven watch loops found the two halves of the
+    /// family disagreeing — etcd and NATS reporting a refusal that never
+    /// reached the store, Redis and S3 not — each with a test. What settles it
+    /// is `RemoteStatus::reachable()`'s own contract: *whether the store
+    /// answered the last time it was asked*. A source that names a list of
+    /// keys never asks, so `Some(false)` here was a status saying something
+    /// untrue about a cluster that may be perfectly healthy — and the status
+    /// carries no message to correct it with. The error still says exactly
+    /// what is wrong, to the caller holding it.
     #[tokio::test]
-    async fn a_refusal_at_the_door_is_reported_rather_than_left_to_a_dropped_handle() {
+    async fn a_refusal_before_the_first_round_trip_is_not_a_store_that_stopped_answering() {
         use dynamic_config::{Remote, RemoteSink};
 
         static REFUSED: Remote = Remote::new();
@@ -1687,7 +1751,11 @@ mod tests {
             .expect_err("a named list cannot be watched");
 
         assert!(error.to_string().contains("cannot be watched"), "{error}");
-        assert_eq!(REFUSED.status().reachable(), Some(false));
+        assert_eq!(
+            REFUSED.status().reachable(),
+            None,
+            "nothing has been asked of this cluster, so it is neither up nor down"
+        );
     }
 
     /// The default every source carries: reporting nowhere changes nothing a

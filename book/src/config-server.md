@@ -1,9 +1,16 @@
 # The Config Server
 
 [`dynamic-config-server`](https://github.com/ctolon/dynamic-config/tree/main/dynamic-config-server)
-serves configuration over HTTP, in the spirit of Spring Cloud Config
-Server: one resolved document per **application** and **profile**, handed
-to a caller that presented a credential scoped to that application.
+serves configuration over HTTP: one resolved document per
+**application** and **profile**, handed to a caller that presented a
+credential scoped to that application.
+
+The URL shape is [Spring Cloud Config
+Server](https://spring.io/projects/spring-cloud-config)'s, deliberately —
+an operator who has run one already knows what `GET /billing/prod`
+returns, and that transfer was worth more than a scheme of our own. What
+else this project owes to other people's work is in
+[CREDITS.md](https://github.com/ctolon/dynamic-config/blob/main/CREDITS.md).
 
 Everything else in this workspace hands configuration to the process that
 called it. This crate hands it **over a socket**, which makes it a
@@ -32,8 +39,8 @@ change.
 | `GET /healthz` | liveness. Unauthenticated |
 | `GET /readyz` | readiness. Unauthenticated |
 
-Spring's vocabulary maps onto this crate's: *application* is the section
-key, and *profile* selects which files are read. A profile here is a
+That vocabulary maps onto this crate's: *application* is the section key,
+and *profile* selects which files are read. A profile here is a
 different set of files chosen by the operator rather than the library's
 `profile_env` — that one is a process-wide environment variable, and a
 server serving two profiles cannot have two of those at once.

@@ -5,8 +5,8 @@ that speaks its API.
 
 ```toml
 [dependencies]
-dynamic-config = { version = "0.6.0", features = ["async"] }
-dynamic-config-s3 = "0.6.0"
+dynamic-config = { version = "0.6.1", features = ["async"] }
+dynamic-config-s3 = "0.6.1"
 ```
 
 ```rust

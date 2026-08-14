@@ -51,7 +51,8 @@ touching nothing the source reads still moves the ref.
 ## The shared contract
 
 The startup-delivery and deleted-key columns are identical on purpose — they
-are decisions rather than accidents, and they hold across all eight crates.
+are decisions rather than accidents, and they hold across all eight store
+crates.
 Transport failures retry too, except where the table names an error that ends
 the watch, deliberately, so a supervisor can restart it:
 

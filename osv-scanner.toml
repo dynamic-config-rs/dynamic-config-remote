@@ -1,0 +1,43 @@
+# Advisories the OSV scan reports that this repository has already decided
+# about, with the decision here rather than in a job's output.
+#
+# Two lists exist on purpose and they do not duplicate each other:
+# `deny.toml`'s `ignore` is what *cargo-deny* matches against RustSec, and
+# cargo-deny treats an entry matching nothing as noise — so an advisory it
+# does not raise cannot be silenced there. OSV aggregates more databases and
+# raises those; this is where they are answered.
+#
+# Every entry names the reason and what would make it expire. An advisory
+# with a fix that is *reachable* never belongs here — it belongs in a
+# dependency bump.
+#
+# Nor does one with **no fix at all**: `scripts/audit-report.py` reports
+# those as warnings rather than failures, so they stay visible every run
+# instead of being silenced once and forgotten. What is left here is the
+# narrow case that would otherwise stop a pull request for something
+# nobody in this repository can do: a fix exists and something upstream
+# pins the version out of reach.
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2026-0002"
+reason = """
+lru 0.12.5, through aws-sdk-s3's identity cache, which pins ^0.12.2 — the fix
+is 0.16.3 and no version of this workspace can reach it until the SDK moves.
+Neither vulnerable path (IterMut's Stacked Borrows violation) occurs in the
+SDK's usage: it caches credentials by key and never iterates mutably.
+RustSec's own criteria do not match this graph, which is why cargo-deny is
+silent about it and this file is not.
+"""
+
+[[IgnoredVulns]]
+id = "GHSA-rhfx-m35p-ff5j"
+reason = "The GitHub alias of RUSTSEC-2026-0002, same package and same reasoning."
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2026-0253"
+reason = """
+lru 0.12.5 again, upstream-pinned by aws-sdk-s3 as above. The panic-safety
+use-after-free needs a user-supplied `Drop`/`Hash` that panics inside an
+`LruCache` operation; the SDK stores plain credential structs, so no panic
+can be raised from inside one.
+"""

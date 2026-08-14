@@ -25,6 +25,37 @@ bumps the patch. A change to the minimum supported Rust version is breaking.
 
 ## [Unreleased]
 
+## [0.6.1] — 2026-08-14
+
+### Changed
+
+- **A watch refused before its first round trip no longer reports the cluster
+  as unreachable.** No format, or a source naming a list of keys: those are
+  refusals this crate makes about the *source*, before a request has left the
+  process, and `RemoteStatus::reachable()` is *whether the store answered the
+  last time it was asked*. `Some(false)` there was a status saying something
+  untrue about a cluster that may be perfectly healthy — and a status carries
+  a kind and a path and no message, so nothing downstream could correct it.
+  The error still says exactly what is wrong, to the caller holding it.
+
+  This was 0.6.1's audit of all seven watch loops settling a split: this crate
+  and `dynamic-config-nats` reported such a refusal, `dynamic-config-redis`
+  and `dynamic-config-s3` did not, and each had a test asserting its own half.
+  Every failure a watch meets *after* the first round trip reports exactly as
+  it did.
+
+### Added
+
+- **Every failure branch of the watch loop is in a table** in this crate's
+  documentation, marked *reports* or *silent* with the reason — including the
+  two silences that are decisions rather than gaps: a token that expired and
+  was refreshed successfully, and a key that was deleted.
+- **A chaos test** (`tests/chaos.rs`, `just chaos`): a stream cut mid-watch by
+  a toxiproxy in front of a cluster that never restarts. It asserts the pair
+  an alert reads — `remote_up` goes to zero *while the staleness clock keeps
+  running* — and that the document that was serving before the cut is still
+  serving after it.
+
 ## [0.6.0] — 2026-08-13
 
 ### Added
@@ -180,7 +211,8 @@ Initial release.
   (re-exported), `from_client` for a client the program already has, and
   `tls` / `tls-roots` features.
 
-[Unreleased]: https://github.com/ctolon/dynamic-config/compare/v0.6.0...HEAD
+[Unreleased]: https://github.com/ctolon/dynamic-config/compare/v0.6.1...HEAD
+[0.6.1]: https://github.com/ctolon/dynamic-config/compare/v0.6.0...v0.6.1
 [0.6.0]: https://github.com/ctolon/dynamic-config/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/ctolon/dynamic-config/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/ctolon/dynamic-config/compare/v0.3.0...v0.4.0

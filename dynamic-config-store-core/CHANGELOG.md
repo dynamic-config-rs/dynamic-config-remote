@@ -30,6 +30,18 @@ one.
 
 ## [Unreleased]
 
+## [0.6.1] — 2026-08-14
+
+### Added
+
+- **The rule every store's watch loop follows is written here**, in
+  `attempts`' own documentation, and each crate's table is that rule applied
+  to its loop: a failure the loop survives by retrying reports; a recovery
+  that worked stays silent; and a refusal that never asked the store reports
+  nowhere. The third is what 0.6.1's audit settled — two crates reported such
+  a refusal and two did not, each with a test, and
+  `RemoteStatus::reachable()`'s contract decided it.
+
 ## [0.6.0] — 2026-08-13
 
 ### Added
@@ -77,5 +89,6 @@ one.
   that is now the `LoneAuthority` argument rather than a second copy of the
   algorithm.
 
-[Unreleased]: https://github.com/ctolon/dynamic-config/compare/v0.6.0...HEAD
+[Unreleased]: https://github.com/ctolon/dynamic-config/compare/v0.6.1...HEAD
+[0.6.1]: https://github.com/ctolon/dynamic-config/compare/v0.6.0...v0.6.1
 [0.6.0]: https://github.com/ctolon/dynamic-config/compare/v0.5.0...v0.6.0

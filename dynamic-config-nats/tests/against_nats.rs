@@ -618,11 +618,20 @@ async fn a_broken_stream_reports_the_store_as_unreachable_and_leaves_the_last_re
     );
 }
 
-/// A refusal that arrives before the first change is reported too, and for the
-/// same reason: a watch is spawned and its handle usually dropped, so a
-/// configuration that will never update again must not read as healthy.
+/// A refusal that arrives *before the first round trip* is not reported, and
+/// this test used to assert the opposite.
+///
+/// 0.6.1's audit of all seven watch loops found the family split — etcd and
+/// NATS reporting a refusal that never reached the store, Redis and S3 not,
+/// each with a test. `RemoteStatus::reachable()`'s own contract settles it:
+/// *whether the store answered the last time it was asked*. A source naming
+/// several keys never asks, so `Some(false)` was a status saying something
+/// untrue about a server that is right here and healthy — and a status
+/// carries a kind and a path and no message, so nothing downstream could
+/// correct it. The error still says exactly what is wrong, to the caller
+/// holding it.
 #[tokio::test]
-async fn a_refusal_at_the_door_is_reported_rather_than_left_to_a_dropped_handle() {
+async fn a_refusal_before_the_first_round_trip_is_not_a_store_that_stopped_answering() {
     static REFUSED: Remote = Remote::new();
 
     fn reloaded() -> Result<(), dynamic_config::Error> {
@@ -651,7 +660,11 @@ async fn a_refusal_at_the_door_is_reported_rather_than_left_to_a_dropped_handle(
         .expect_err("a merged document has no one key to watch");
 
     assert!(error.to_string().contains("several keys"), "{error}");
-    assert_eq!(REFUSED.status().reachable(), Some(false));
+    assert_eq!(
+        REFUSED.status().reachable(),
+        None,
+        "nothing has been asked of this server, so it is neither up nor down"
+    );
     assert_eq!(
         REFUSED.status().fetches,
         0,

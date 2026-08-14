@@ -1,9 +1,9 @@
 # Writing a Store
 
 A store is one trait implementation, and — if the protocol allows it — a
-watch loop. Everything else is polish. Seven of these ship from this
+watch loop. Everything else is polish. Eight of these ship from this
 repository, deliberately alike, and the likeness is the point: they are the
-reference corpus, and the fastest way to a correct eighth is to copy the
+reference corpus, and the fastest way to a correct ninth is to copy the
 closest one rather than starting from the shape in your head.
 
 | If the client is… | Read | Trait |

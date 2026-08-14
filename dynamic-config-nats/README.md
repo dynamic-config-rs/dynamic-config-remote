@@ -4,8 +4,8 @@ Read [`dynamic-config`] configuration from a NATS JetStream key/value bucket.
 
 ```toml
 [dependencies]
-dynamic-config = { version = "0.6.0", features = ["async"] }
-dynamic-config-nats = "0.6.0"
+dynamic-config = { version = "0.6.1", features = ["async"] }
+dynamic-config-nats = "0.6.1"
 ```
 
 ```rust

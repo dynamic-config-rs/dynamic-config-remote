@@ -13,8 +13,8 @@ repository.workspace = true
 homepage.workspace = true
 documentation = "https://docs.rs/dynamic-config-nats"
 authors.workspace = true
-categories.workspace = true
-keywords.workspace = true
+categories = ["config", "api-bindings"]
+keywords = ["config", "nats", "jetstream", "hot-reload", "watch"]
 exclude.workspace = true
 
 [dependencies]

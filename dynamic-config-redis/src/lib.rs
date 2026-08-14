@@ -142,6 +142,52 @@
 //! `dynamic_config_remote_up` describes the last *delivery* rather than the
 //! last *attempt*.
 //!
+//!
+//! # Every failure branch of the watch loop, and what it reports
+//!
+//! A watch is the half of a store `dynamic-config` cannot see, and
+//! [`reporting_to`](Redis::reporting_to) is what lets it speak: the sink the
+//! loop already holds is told about every attempt that came back with
+//! nothing. Which attempts those are is a table rather than prose, because
+//! the question an operator asks is *which* silence is deliberate.
+//!
+//! Three rules decide the column, and they are the same three in all seven
+//! store crates:
+//!
+//! 1. **A failure the loop survives by retrying reports.** That is the case
+//!    the whole feature exists for: the stream is down, the last delivery is
+//!    old, and nothing else would ever say so out loud.
+//! 2. **A recovery that worked stays silent.** Only a delivery or a fetch
+//!    clears the streak, so reporting a five-minute token turning over on a
+//!    healthy cluster would drive `remote_up` to zero and leave it there.
+//! 3. **A refusal that never asked the store reports nowhere.** No format, a
+//!    key shape that cannot be watched, material that will not build a
+//!    client: `RemoteStatus::reachable()` is *whether the store answered the
+//!    last time it was asked*, and these never ask. They are returned to the
+//!    caller, who is the one holding the mistake — and a status cannot
+//!    correct them, since it carries a kind and a path and no message.
+//!
+//! | Branch | Reports |
+//! |---|---|
+//! | the format is missing, or the keys cannot be watched | no — rule 3: nothing has been asked of the server |
+//! | keyspace notifications are switched off on the server | **yes** — a `CONFIG GET` answered, and it answered that this watch cannot work |
+//! | the subscriber connection, the database index, a `SUBSCRIBE`, or the read timeout fails | **yes** — every one of those is a round trip, or a socket that has already made one |
+//! | the read timeout expires with no message | no — that is how `stop` is noticed |
+//! | the subscription fails | **yes**, and the watch ends |
+//! | a `del` or `expired` event | no — see the note below |
+//! | the re-read after a notification fails | **yes**, and the loop waits for the next notification |
+//! | a coalesced duplicate: the set came back the same | no — the server answered |
+//! | `on_change` refuses the document | no — the server answered; `apply` counted the delivery, and what the document did next is `ConfigStatus`'s half |
+//!
+//! **The deletion row is a difference between stores, deliberately left
+//! standing.** Here and in `dynamic-config-etcd` a key holding nothing leaves
+//! the running snapshot alone and says nothing, because the server is
+//! answering and only a delivery clears a streak — reporting it would park
+//! `remote_up` at zero for as long as nobody recreated the key.
+//! `dynamic-config-consul` records it instead, on the argument that a `fetch`
+//! of the same key fails. Both are written down at the branch, and neither
+//! moves in a patch release.
+//!
 //! [`dynamic-config`]: https://docs.rs/dynamic-config
 
 #![forbid(unsafe_code)]
@@ -542,6 +588,20 @@ impl Redis {
         self
     }
 
+    /// Reports `error` to whatever asked to hear about failed attempts, and
+    /// hands it straight back.
+    ///
+    /// Every failure that *ends* a watch goes through here, so reporting is
+    /// one word at each site rather than a branch that can be left out of the
+    /// next one. It cannot fail and it does not touch the error: a loop must
+    /// never have to handle a failure to report a failure, and the caller sees
+    /// exactly what it always saw.
+    fn failing(&self, error: Error) -> Error {
+        self.attempts.failed(&error);
+
+        error
+    }
+
     /// Calls `on_change` whenever what this source reads changes.
     ///
     /// Uses **keyspace notifications**: Redis publishes to
@@ -618,10 +678,15 @@ impl Redis {
         // Validated up front so a key with no format fails at `watch` rather
         // than on the first notification, hours later. The reads themselves go
         // through `fetch`, which resolves the format again.
+        // These two are returned and recorded nowhere: nothing has been asked
+        // of the server yet, and `reachable()` is *whether the store answered
+        // the last time it was asked*. Everything below this line is a round
+        // trip, and every one of those reports.
         self.format()?;
         let keys: Vec<String> = self.watched()?.to_vec();
 
-        self.require_keyspace_notifications()?;
+        self.require_keyspace_notifications()
+            .map_err(|error| self.failing(error))?;
 
         // A subscription needs a connection of its own: Redis puts the
         // connection into a mode where ordinary commands are refused.
@@ -629,7 +694,10 @@ impl Redis {
             .client
             .get_connection_with_timeout(self.timeout)
             .map_err(|error| {
-                Error::remote(format!("{}: cannot subscribe: {error}", self.describe()))
+                self.failing(Error::remote(format!(
+                    "{}: cannot subscribe: {error}",
+                    self.describe()
+                )))
             })?;
 
         // The database index is not readable from the client in this version,
@@ -639,10 +707,10 @@ impl Redis {
         // subscribed to the wrong database is a watch that never fires, which
         // reads as "configuration stopped changing" rather than as a failure.
         let database = self.database().ok_or_else(|| {
-            Error::remote(format!(
+            self.failing(Error::remote(format!(
                 "{}: cannot determine the database index the connection lands on, so the keyspace channel cannot be named",
                 self.describe()
-            ))
+            )))
         })?;
 
         let mut pubsub = subscriber.as_pubsub();
@@ -656,14 +724,17 @@ impl Redis {
             let channel = format!("__keyspace@{database}__:{key}");
 
             pubsub.subscribe(&channel).map_err(|error| {
-                Error::remote(format!("{}: cannot subscribe: {error}", self.describe()))
+                self.failing(Error::remote(format!(
+                    "{}: cannot subscribe: {error}",
+                    self.describe()
+                )))
             })?;
         }
 
         // Bounded, so `stop` is noticed without a message having to arrive.
-        pubsub
-            .set_read_timeout(Some(POLL_SLICE))
-            .map_err(|error| Error::remote(format!("{}: {error}", self.describe())))?;
+        pubsub.set_read_timeout(Some(POLL_SLICE)).map_err(|error| {
+            self.failing(Error::remote(format!("{}: {error}", self.describe())))
+        })?;
 
         // What the last delivery carried, so a set written together is not
         // delivered once per key. `None` for a single key: one write is one
@@ -2255,11 +2326,16 @@ mod tests {
         assert!(outcome.is_ok(), "stopping is not a failure: {outcome:?}");
     }
 
-    /// The line the other way: a watch refused at the door is returned to the
-    /// caller standing there, and half of those refusals are deployment
-    /// mistakes rather than a store that stopped answering. Charging them to
-    /// `dynamic_config_remote_up` would page somebody about Redis for a typo
-    /// in a source.
+    /// A watch refused at the door is *not* a store that stopped answering.
+    ///
+    /// The line, and 0.6.1's audit of all seven watch loops is what put it
+    /// here rather than in one crate's habit: etcd and NATS used to report a
+    /// refusal that never reached the store, Redis and S3 did not, and both
+    /// had a test saying so. `RemoteStatus::reachable()` settles it — it is
+    /// *whether the store answered the last time it was asked*, and a source
+    /// with an unwatchable key shape never asks. Charging it to
+    /// `dynamic_config_remote_up` would page somebody about Redis for a typo,
+    /// and the status carries no message to correct them with.
     #[test]
     fn a_watch_refused_at_the_door_is_not_a_store_that_stopped_answering() {
         use dynamic_config::dynamic_config;

@@ -4,8 +4,8 @@ Read [`dynamic-config`] configuration from HashiCorp Vault's KV v2 store.
 
 ```toml
 [dependencies]
-dynamic-config = "0.6.0"
-dynamic-config-vault = "0.6.0"
+dynamic-config = "0.6.1"
+dynamic-config-vault = "0.6.1"
 ```
 
 ```rust

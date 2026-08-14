@@ -6,8 +6,8 @@ set of them read out of one commit.
 
 ```toml
 [dependencies]
-dynamic-config = "0.6.0"
-dynamic-config-git = "0.6.0"
+dynamic-config = "0.6.1"
+dynamic-config-git = "0.6.1"
 ```
 
 ```rust

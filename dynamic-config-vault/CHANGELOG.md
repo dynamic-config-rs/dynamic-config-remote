@@ -25,6 +25,15 @@ bumps the patch. A change to the minimum supported Rust version is breaking.
 
 ## [Unreleased]
 
+## [0.6.1] — 2026-08-14
+
+### Added
+
+- **Every failure branch of the watch loop is in a table** in this crate's
+  documentation, marked *reports* or *silent* with the reason. Nothing about
+  the loop changed; what changed is that the question can now be answered by
+  reading.
+
 ## [0.6.0] — 2026-08-13
 
 ### Added
@@ -146,7 +155,8 @@ Initial release.
 - `with_namespace`, `with_timeout`, `with_agent`; one HTTP client per
   source, not per request.
 
-[Unreleased]: https://github.com/ctolon/dynamic-config/compare/v0.6.0...HEAD
+[Unreleased]: https://github.com/ctolon/dynamic-config/compare/v0.6.1...HEAD
+[0.6.1]: https://github.com/ctolon/dynamic-config/compare/v0.6.0...v0.6.1
 [0.6.0]: https://github.com/ctolon/dynamic-config/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/ctolon/dynamic-config/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/ctolon/dynamic-config/compare/v0.3.0...v0.4.0

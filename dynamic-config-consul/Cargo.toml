@@ -13,8 +13,8 @@ repository.workspace = true
 homepage.workspace = true
 documentation = "https://docs.rs/dynamic-config-consul"
 authors.workspace = true
-categories.workspace = true
-keywords.workspace = true
+categories = ["config", "api-bindings"]
+keywords = ["config", "consul", "hot-reload", "watch", "kv"]
 exclude.workspace = true
 
 [dependencies]

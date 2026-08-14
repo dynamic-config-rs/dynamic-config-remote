@@ -172,6 +172,41 @@
 //! reaches this crate is a stream that stopped — a deleted bucket, a consumer
 //! that is gone, a value that is not a document — and that is what is reported.
 //!
+//!
+//! # Every failure branch of the watch loop, and what it reports
+//!
+//! A watch is the half of a store `dynamic-config` cannot see, and
+//! [`reporting_to`](Nats::reporting_to) is what lets it speak: the sink the
+//! loop already holds is told about every attempt that came back with
+//! nothing. Which attempts those are is a table rather than prose, because
+//! the question an operator asks is *which* silence is deliberate.
+//!
+//! Three rules decide the column, and they are the same three in all seven
+//! store crates:
+//!
+//! 1. **A failure the loop survives by retrying reports.** That is the case
+//!    the whole feature exists for: the stream is down, the last delivery is
+//!    old, and nothing else would ever say so out loud.
+//! 2. **A recovery that worked stays silent.** Only a delivery or a fetch
+//!    clears the streak, so reporting a five-minute token turning over on a
+//!    healthy cluster would drive `remote_up` to zero and leave it there.
+//! 3. **A refusal that never asked the store reports nowhere.** No format, a
+//!    key shape that cannot be watched, material that will not build a
+//!    client: `RemoteStatus::reachable()` is *whether the store answered the
+//!    last time it was asked*, and these never ask. They are returned to the
+//!    caller, who is the one holding the mistake — and a status cannot
+//!    correct them, since it carries a kind and a path and no message.
+//!
+//! | Branch | Reports |
+//! |---|---|
+//! | the format is missing, or the source names several keys | no — rule 3: nothing has been asked of the server |
+//! | the bucket refuses the watch | **yes** — the first round trip |
+//! | the stream errors | **yes**, and the watch ends — `async-nats` reconnects on its own, so reaching here means it could not |
+//! | an operation that is not a `Put` | no — nothing changed |
+//! | the value is not UTF-8 | **yes** — the same failure a `fetch` of it would have recorded |
+//! | `on_change` refuses the document | no — the store answered; `apply` counted the delivery, and what the document did next is `ConfigStatus`'s half |
+//! | the stream ends without an error | **yes** — the connection went away, or the bucket did |
+//!
 //! [`dynamic-config`]: https://docs.rs/dynamic-config
 //! [`dynamic-config-consul`]: https://docs.rs/dynamic-config-consul
 //! [`dynamic-config-etcd`]: https://docs.rs/dynamic-config-etcd
@@ -770,13 +805,14 @@ impl Nats {
     where
         F: FnMut(Fetched) -> Result<(), Error> + Send,
     {
-        let format = self.format().map_err(|error| self.failing(error))?;
+        // Neither of these is recorded: no request has left the process, and
+        // `RemoteStatus::reachable()` is *whether the store answered the last
+        // time it was asked*. Everything below the first round trip reports;
+        // see the table in this crate's documentation.
+        let format = self.format()?;
         // Refused up front, so a multi-key source fails at `watch` rather than
-        // on the first change, hours later. Reported like every other end of a
-        // watch: this one is spawned and its handle usually dropped, so a
-        // refusal nobody is holding would leave a configuration frozen with
-        // nothing said.
-        let key = self.single_key().map_err(|error| self.failing(error))?;
+        // on the first change, hours later.
+        let key = self.single_key()?;
 
         let mut entries = self.store.watch(key).await.map_err(|error| {
             self.failing(Error::remote(format!(

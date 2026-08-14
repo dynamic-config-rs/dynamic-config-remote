@@ -12,8 +12,8 @@ repository.workspace = true
 homepage.workspace = true
 documentation = "https://docs.rs/dynamic-config-etcd"
 authors.workspace = true
-categories.workspace = true
-keywords.workspace = true
+categories = ["config", "api-bindings"]
+keywords = ["config", "etcd", "hot-reload", "watch", "grpc"]
 exclude.workspace = true
 
 [features]

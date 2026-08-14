@@ -110,6 +110,47 @@
 //! # }
 //! ```
 //!
+//!
+//! # Every failure branch of the watch loop, and what it reports
+//!
+//! A watch is the half of a store `dynamic-config` cannot see, and
+//! [`reporting_to`](Consul::reporting_to) is what lets it speak: the sink the
+//! loop already holds is told about every attempt that came back with
+//! nothing. Which attempts those are is a table rather than prose, because
+//! the question an operator asks is *which* silence is deliberate.
+//!
+//! Three rules decide the column, and they are the same three in all seven
+//! store crates:
+//!
+//! 1. **A failure the loop survives by retrying reports.** That is the case
+//!    the whole feature exists for: the stream is down, the last delivery is
+//!    old, and nothing else would ever say so out loud.
+//! 2. **A recovery that worked stays silent.** Only a delivery or a fetch
+//!    clears the streak, so reporting a five-minute token turning over on a
+//!    healthy cluster would drive `remote_up` to zero and leave it there.
+//! 3. **A refusal that never asked the store reports nowhere.** No format, a
+//!    key shape that cannot be watched, material that will not build a
+//!    client: `RemoteStatus::reachable()` is *whether the store answered the
+//!    last time it was asked*, and these never ask. They are returned to the
+//!    caller, who is the one holding the mistake — and a status cannot
+//!    correct them, since it carries a kind and a path and no message.
+//!
+//! | Branch | Reports |
+//! |---|---|
+//! | the format is missing, the source cannot be watched, or the agent cannot be built | no — rule 3: nothing has been asked of the agent |
+//! | the blocking query fails | **yes**, and the loop waits and retries |
+//! | the subtree cannot be folded into one document | **yes**, and the watch ends — a deployment bug, not a blip |
+//! | the watched key holds no value | **yes**, and the loop waits and retries |
+//! | the index reset, the document is unchanged, or this is the priming query | no — the agent answered |
+//! | `on_change` refuses the document | no — the agent answered; `apply` counted the delivery, and what the document did next is `ConfigStatus`'s half |
+//!
+//! The empty-key row is a **difference between stores**, deliberately left
+//! standing: `dynamic-config-etcd` and `dynamic-config-redis` leave the
+//! running snapshot alone and say nothing there, because only a delivery
+//! clears a streak and a deleted key would park `remote_up` at zero. This
+//! crate records it, on the argument that a `fetch` of the same key fails.
+//! Both are written down at the branch, and neither moves in a patch release.
+//!
 //! [`dynamic-config`]: https://docs.rs/dynamic-config
 //! [`dynamic-config-vault`]: https://docs.rs/dynamic-config-vault
 
@@ -616,6 +657,10 @@ impl Consul {
     where
         F: FnMut(Fetched) -> Result<(), Error>,
     {
+        // Returned and recorded nowhere, all three of them: nothing has been
+        // asked of the agent yet, and `reachable()` is *whether the store
+        // answered the last time it was asked*. See the table in this crate's
+        // documentation for where that line falls.
         let format = self.format()?;
         // Refused up front, so a source that cannot be watched fails at
         // `watch` rather than on the first change, hours later.

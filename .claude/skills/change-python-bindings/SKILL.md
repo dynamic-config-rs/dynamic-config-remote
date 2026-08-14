@@ -15,7 +15,11 @@ code.
 dynamic-config-python/
   src/                       the compiled half — `dynamic_config._core`
     lib.rs                   module registration, the two version strings
-    config.rs                the engine object: sources, lifecycle, hooks
+    config/                  the engine object: sources, lifecycle, hooks
+      mod.rs                 the Config class itself, and Watch/Snapshot
+      inner.rs               the shared state a hook and a load both touch
+      scrub.rs               a Python failure, minus the values it names
+      handles.rs             the objects handed back out
     convert.rs               resolved tree ⇄ Python data
     errors.rs                the exception hierarchy, mirroring ErrorKind
   python/dynamic_config/     the facade, one concern per file
@@ -27,16 +31,19 @@ dynamic-config-python/
     _errors.py               NotInitialisedError
     _executor.py             set_executor
     _lifetime.py             Watch, HookGuard, the atexit sweep
+    _msgspec.py              a msgspec Struct as a schema
     _pydantic.py             a Pydantic model as a schema
     _schema.py               which adapter a class gets; the shared questions
     _settings.py             the pydantic-settings bridge
+    _values.py               Values: a configuration with no schema
     _core.pyi                stubs for the compiled half
     py.typed
   tests/                     pytest, one file per concern
     test_dataclasses.py      the dependency-free schema, and its refusals
+    test_msgspec.py          the msgspec schema, and the three answers of its own
     test_pydantic.py         the class surface, aliases, BaseSettings
     test_integration.py      whole scenarios, and the shipped examples
-  examples/                  seventeen runnable scripts, all run in CI
+  examples/                  twenty-two runnable scripts, all run in CI
   benchmarks/read_path.py    the numbers the book quotes
 ```
 
@@ -56,7 +63,7 @@ Adding or changing a method on `_core.Config` means **all** of these:
    `__init__.py` if the name is public.
 3. `python/dynamic_config/_core.pyi` — the stub, or `mypy --strict`
    stops seeing through the boundary.
-4. `book/src/python/reference.md` — the API reference table. A method
+4. `book-python/src/reference.md` — the API reference table. A method
    with an async twin goes on the *same row* as its twin.
 5. `tests/` — the behaviour, not the call. A call a *service* makes
    belongs in `test_integration.py` as well, exercised the way a service

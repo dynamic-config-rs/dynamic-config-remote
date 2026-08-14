@@ -130,6 +130,39 @@
 //! it from another executor panics inside the SDK. The etcd and NATS
 //! companions are executor-agnostic; this one is honest about not being.
 //!
+//!
+//! # Every failure branch of the watch loop, and what it reports
+//!
+//! A watch is the half of a store `dynamic-config` cannot see, and
+//! [`reporting_to`](S3::reporting_to) is what lets it speak: the sink the
+//! loop already holds is told about every attempt that came back with
+//! nothing. Which attempts those are is a table rather than prose, because
+//! the question an operator asks is *which* silence is deliberate.
+//!
+//! Three rules decide the column, and they are the same three in all seven
+//! store crates:
+//!
+//! 1. **A failure the loop survives by retrying reports.** That is the case
+//!    the whole feature exists for: the stream is down, the last delivery is
+//!    old, and nothing else would ever say so out loud.
+//! 2. **A recovery that worked stays silent.** Only a delivery or a fetch
+//!    clears the streak, so reporting a five-minute token turning over on a
+//!    healthy cluster would drive `remote_up` to zero and leave it there.
+//! 3. **A refusal that never asked the store reports nowhere.** No format, a
+//!    key shape that cannot be watched, material that will not build a
+//!    client: `RemoteStatus::reachable()` is *whether the store answered the
+//!    last time it was asked*, and these never ask. They are returned to the
+//!    caller, who is the one holding the mistake — and a status cannot
+//!    correct them, since it carries a kind and a path and no message.
+//!
+//! | Branch | Reports |
+//! |---|---|
+//! | the format is missing, or the source names several keys | no — rule 3: nothing has been asked of the bucket |
+//! | the `HEAD` that reads the ETag fails — an expired credential, a bucket briefly unreachable | **yes**, and the loop waits out the interval |
+//! | the `GET` after a moved tag fails | **yes**, and `seen` is left where it was so the next tick tries the same tag again |
+//! | the first tick, or an ETag that has not moved | no — the bucket answered |
+//! | `on_change` refuses the document | no — the bucket answered; `apply` counted the delivery, and what the document did next is `ConfigStatus`'s half |
+//!
 //! [`dynamic-config`]: https://docs.rs/dynamic-config
 
 #![forbid(unsafe_code)]
@@ -723,6 +756,9 @@ impl S3 {
         // Checked before the first tick: with no format every `read` inside
         // the loop fails, and the `if let Ok` there — right for a transient
         // network failure — would swallow a permanent configuration mistake.
+        // Both are returned and recorded nowhere: nothing has been asked of
+        // the bucket yet, and `reachable()` is *whether the store answered the
+        // last time it was asked*.
         self.format()?;
         // Refused up front for the same reason, so a multi-key source fails at
         // `watch` rather than on the first change, hours later.
@@ -1578,11 +1614,12 @@ mod tests {
         drop(server);
     }
 
-    /// The line the other way: a watch refused at the door is returned to the
-    /// caller standing there, and those refusals are deployment mistakes
-    /// rather than a store that stopped answering. Charging them to
-    /// `dynamic_config_remote_up` would page somebody about S3 for a source
-    /// that names several keys.
+    /// A watch refused at the door is *not* a store that stopped answering.
+    ///
+    /// The reasoning is written out beside the same test in
+    /// `dynamic-config-redis`, which is where 0.6.1's audit settled it for all
+    /// seven stores: `reachable()` is *whether the store answered the last
+    /// time it was asked*, and a source that names several keys never asks.
     #[tokio::test]
     async fn a_watch_refused_at_the_door_is_not_a_store_that_stopped_answering() {
         use dynamic_config::dynamic_config;

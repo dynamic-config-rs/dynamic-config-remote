@@ -1,7 +1,7 @@
 //! An HTTP configuration server for
-//! [dynamic-config](https://docs.rs/dynamic-config), in the spirit of Spring
-//! Cloud Config Server: one resolved document per application and profile,
-//! served over HTTP under per-caller authorisation.
+//! [dynamic-config](https://docs.rs/dynamic-config): one resolved document
+//! per application and profile, served over HTTP under per-caller
+//! authorisation.
 //!
 //! The client half already existed — a service that consumes a config server
 //! is one more `RemoteSource` — so what is new here is the server, and a

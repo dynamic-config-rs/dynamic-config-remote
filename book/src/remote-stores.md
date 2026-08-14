@@ -316,12 +316,28 @@ ageing, because the pair is the alert — *up went to zero* **and** *the
 document being served is an hour old*. A failure that reset the clock would
 hide the second half.
 
-Two things deliberately do **not** report. A refusal at the door — no format,
-a shape the store cannot watch, a subscription that will not open — is
-returned to the caller standing there, before there is a loop to be silent
-in; charging it to `remote_up` would page somebody about Redis for a typo.
-And a *callback's* own error is not the store's failure: the store answered,
-and what the document then does is
+**Which attempts report is three rules**, and every store crate's
+documentation carries the table its own loop makes of them — branch by
+branch, each silence with the reason at the branch:
+
+1. **A failure the loop survives by retrying reports.** That is the case the
+   whole thing exists for: the stream is down, the last delivery is old, and
+   nothing else would say so.
+2. **A recovery that worked stays silent.** Only a delivery or a fetch clears
+   the streak, so reporting a five-minute token turning over on a healthy
+   cluster would drive `remote_up` to zero and leave it there.
+3. **A refusal that never asked the store reports nowhere.** No format, a key
+   shape that cannot be watched, TLS material that will not build a client:
+   `reachable()` is *whether the store answered the last time it was asked*,
+   and none of those ask. They are returned to the caller standing there, and
+   charging them to `remote_up` would page somebody about Redis for a typo —
+   with a status that carries a kind and a path and no message to correct
+   them with. The line is the **first round trip**, not the first change: a
+   subscription that will not open, or a connection that is refused, has
+   asked, and reports.
+
+A *callback's* own error is not the store's failure either: the store
+answered, and what the document then does is
 [`ConfigStatus`](reload-lifecycle.md#operating-a-configuration)'s half of the
 picture.
 
@@ -331,7 +347,7 @@ already records itself.
 ## Credentials, and keeping them working
 
 Every store has its own way in, and every one of them expires. Three rules hold
-across all eight crates:
+across all eight store crates:
 
 **Logging in is lazy.** Building a source reaches nothing; the first read does
 it. Constructing a source is not I/O, and configuration that hits the network on
@@ -408,7 +424,7 @@ etcd's `ConnectOptions`, a `ureq::Agent` — means options this project has
 never heard of keep working, which is a real property and one nothing here
 took away. It also had two costs. Four of the eight stores had no such door
 at all, so an enterprise behind a private CA could not use them. And none
-of it could ever cross into the [Python wheels](python/remote-stores.md),
+of it could ever cross into the [Python wheels](https://ctolon.github.io/dynamic-config/python/remote-stores.html),
 because there is no Python spelling for a `tonic` TLS configuration or a
 `ureq` agent — which is exactly why the new surface is **data**, and why a
 later binding has something to bind to.

@@ -12,8 +12,8 @@ repository.workspace = true
 homepage.workspace = true
 documentation = "https://docs.rs/dynamic-config-firestore"
 authors.workspace = true
-categories.workspace = true
-keywords.workspace = true
+categories = ["config", "api-bindings"]
+keywords = ["config", "firestore", "gcp", "hot-reload", "watch"]
 exclude.workspace = true
 
 [dependencies]

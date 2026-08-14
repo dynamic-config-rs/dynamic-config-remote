@@ -20,6 +20,28 @@
 //! is a no-op when nobody asked for reporting, and cannot be given anything
 //! but an error.
 //!
+//! # Which attempts report, in all seven crates
+//!
+//! Three rules, and each store crate's documentation carries the table its
+//! own loop makes of them:
+//!
+//! 1. **A failure the loop survives by retrying reports.** The stream is
+//!    down, the last delivery is old, and nothing else would say so.
+//! 2. **A recovery that worked stays silent.** Only a delivery or a fetch
+//!    clears the streak, so reporting a token that turned over on a healthy
+//!    cluster would drive `remote_up` to zero and leave it there.
+//! 3. **A refusal that never asked the store reports nowhere.** No format, a
+//!    key shape that cannot be watched, TLS material that will not build a
+//!    client: [`RemoteStatus::reachable`] is *whether the store answered the
+//!    last time it was asked*, and none of those ask. They are returned to
+//!    the caller, who is the one holding the mistake.
+//!
+//! Rule 3 is the one 0.6.1's audit settled. Two crates reported such a
+//! refusal and two did not, each with a test asserting its half; what decided
+//! it is that a status carries a kind and a path and **no message**, so a
+//! `remote_up = 0` for a source typo is an alert about the store that nothing
+//! downstream can correct.
+//!
 //! # What it deliberately does not do
 //!
 //! It does not touch the document, the fetch count or the clock. A failed
@@ -31,6 +53,7 @@
 //!
 //! [`RemoteSink::apply`]: dynamic_config::RemoteSink::apply
 //! [`RemoteStatus`]: dynamic_config::RemoteStatus
+//! [`RemoteStatus::reachable`]: dynamic_config::RemoteStatus::reachable
 
 use dynamic_config::{Error, RemoteSink};
 

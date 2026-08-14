@@ -13,8 +13,8 @@ repository.workspace = true
 homepage.workspace = true
 documentation = "https://docs.rs/dynamic-config-redis"
 authors.workspace = true
-categories.workspace = true
-keywords.workspace = true
+categories = ["config", "api-bindings"]
+keywords = ["config", "redis", "hot-reload", "watch", "keyspace"]
 exclude.workspace = true
 
 [features]

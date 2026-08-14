@@ -25,6 +25,28 @@ bumps the patch. A change to the minimum supported Rust version is breaking.
 
 ## [Unreleased]
 
+## [0.6.1] — 2026-08-14
+
+### Added
+
+- **Establishing a subscription now reports what it costs.** The keyspace
+  notification probe, the subscriber connection, the database-index read, each
+  `SUBSCRIBE` and the read timeout are round trips, and a watch that died on
+  one of them used to return an error to a caller that had usually spawned it
+  and dropped the handle — leaving a configuration that would never update
+  again with nothing anywhere saying so. They report now. The two refusals
+  that reach no server — no format, a key shape that cannot be watched — go on
+  reporting nowhere, which this crate always did and which 0.6.1's audit made
+  the rule for all seven stores.
+- **Every failure branch of the watch loop is in a table** in this crate's
+  documentation, marked *reports* or *silent* with the reason — including the
+  deletion branch, which leaves the running snapshot alone and says nothing.
+- **A chaos test** (`tests/chaos.rs`, `just chaos`): a subscription cut
+  mid-watch by a toxiproxy in front of a server that never restarts. It
+  asserts the pair an alert reads — `remote_up` goes to zero *while the
+  staleness clock keeps running* — and that the document that was serving
+  before the cut is still serving after it.
+
 ## [0.6.0] — 2026-08-13
 
 ### Added
@@ -179,7 +201,8 @@ Initial release.
 - Credentials in the URL, redacted before any error message; a `tls` feature
   for `rediss://`; `from_client` for a client the program already has.
 
-[Unreleased]: https://github.com/ctolon/dynamic-config/compare/v0.6.0...HEAD
+[Unreleased]: https://github.com/ctolon/dynamic-config/compare/v0.6.1...HEAD
+[0.6.1]: https://github.com/ctolon/dynamic-config/compare/v0.6.0...v0.6.1
 [0.6.0]: https://github.com/ctolon/dynamic-config/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/ctolon/dynamic-config/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/ctolon/dynamic-config/compare/v0.3.0...v0.4.0

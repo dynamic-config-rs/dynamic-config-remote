@@ -64,7 +64,7 @@ round trip. Anything without a configuration meaning is refused at the
 call rather than coerced.
 
 **8. The documents that rot.** A new or changed method has to reach the
-facade (with a docstring), `_core.pyi`, `book/src/python/reference.md`
+facade (with a docstring), `_core.pyi`, `book-python/src/reference.md`
 (async twins on the same row), the tests, and the crate's CHANGELOG. A
 new source option also reaches the decorator's arguments. Missing stub
 entries are invisible until `mypy --strict` runs; missing reference rows

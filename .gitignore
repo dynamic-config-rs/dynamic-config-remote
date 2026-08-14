@@ -34,6 +34,10 @@ Cargo.toml.orig
 # notices both — so that test writes under the crate instead.
 /dynamic-config-server/tests/scratch/
 
+# And the Node suite, which watches files for the same reason and writes
+# its fixtures in the same place.
+/dynamic-config-node/tests/scratch/
+
 /RELEASE-CHECKLIST.md
 
 # The Python extension's build and tool output. The wheel and the compiled

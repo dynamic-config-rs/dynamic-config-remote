@@ -51,8 +51,9 @@ The `no_std` crate has its own features and its own recipe:
 just embedded       # host tests + a thumbv7em build with no std at all
 ```
 
-The seven store crates' tests drive real servers in containers and need a
-working Docker daemon. They fail rather than skipping when there is none: a
+Seven of the eight store crates drive real servers in containers and need a
+working Docker daemon — git is the exception, and its tests build a repository
+in a temporary directory like any other fixture. They fail rather than skipping when there is none: a
 test that quietly stops running is one nobody notices has stopped.
 
 ```sh
@@ -65,6 +66,49 @@ Their scripted-server tests need no Docker and run in seconds:
 ```sh
 just mocks
 ```
+
+And the chaos suites take a store away *mid-watch* — a toxiproxy in front of
+a server that never restarts, so both the cut and the recovery are
+assertable. They are `#[ignore]`d, so nothing above runs them:
+
+```sh
+just chaos          # Redis, Consul, etcd — one per loop shape
+```
+
+Two containers per test and tens of seconds each, which is why they are a
+nightly and release gate rather than a per-commit one. What they pin is the
+pair an alert reads: `remote_up` goes to zero *while the staleness clock
+keeps running*, and the last good document is still being served.
+
+## The Node.js bindings
+
+```sh
+just node           # build the addon, run the suite, run every example
+```
+
+Node 18 or newer, and nothing else: the suite is `node --test` and the
+facade is JavaScript with a hand-written `.d.ts`, so there is no build
+step and no `npm install` in the loop. Three examples want a framework —
+they say so and exit cleanly without one.
+
+The type check is the exception, and it is skipped with a word rather than
+failing when TypeScript is absent:
+
+```sh
+cd dynamic-config-node && npm install -D typescript && npm run typecheck
+```
+
+It is not optional in CI. A regression in the `.d.ts` is invisible to a
+test suite — `config.current().host` runs perfectly well while the checker
+calls it `unknown` — which is why `tests/typing/usage.ts` exists and is
+compiled under `strict`, `exactOptionalPropertyTypes` and
+`noUncheckedIndexedAccess`.
+
+**What to know before changing the compiled half**: validation runs inside
+the load, on a worker thread, and reaches the event loop through a
+`ThreadsafeFunction`. That ordering is what makes a rejected document
+change nothing, and it is why nothing here is synchronous.
+`book-node/src/internals.md` is the whole argument.
 
 ## The Python bindings, without a GIL
 
@@ -98,7 +142,7 @@ so the claim lives where it is made. And
 `sys._is_gil_enabled()` rather than watching for the interpreter's warning: the
 warning fires once per process at the first import, so a test that reloads the
 module and catches warnings passes either way.
-[Free-Threaded CPython](book/src/python/free-threading.md) is the audit.
+[Free-Threaded CPython](book-python/src/free-threading.md) is the audit.
 
 ## Instruction counts
 

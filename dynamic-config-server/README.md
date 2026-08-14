@@ -1,9 +1,8 @@
 # dynamic-config-server
 
-An HTTP configuration server for [`dynamic-config`], in the spirit of
-Spring Cloud Config Server: one resolved document per **application** and
-**profile**, handed to a caller that presented a credential scoped to
-that application.
+An HTTP configuration server for [`dynamic-config`]: one resolved document
+per **application** and **profile**, handed to a caller that presented a
+credential scoped to that application.
 
 Run it as a service:
 
@@ -16,7 +15,7 @@ Or mount its router in a service you already run:
 
 ```toml
 [dependencies]
-dynamic-config-server = "0.6.0"
+dynamic-config-server = "0.6.1"
 ```
 
 ## What it serves

@@ -13,8 +13,8 @@ repository.workspace = true
 homepage.workspace = true
 documentation = "https://docs.rs/dynamic-config-git"
 authors.workspace = true
-categories.workspace = true
-keywords.workspace = true
+categories = ["config", "development-tools"]
+keywords = ["config", "git", "gitops", "hot-reload", "watch"]
 exclude.workspace = true
 
 [dependencies]

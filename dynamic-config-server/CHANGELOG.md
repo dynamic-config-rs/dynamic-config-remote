@@ -30,6 +30,8 @@ untouched.
 
 ## [Unreleased]
 
+## [0.6.1] — 2026-08-14
+
 ## [0.6.0] — 2026-08-13
 
 ### Added
@@ -327,6 +329,7 @@ untouched.
   revoke the token.** The reasoning is in the book's threat model, under
   *Not revocation*.
 
-[Unreleased]: https://github.com/ctolon/dynamic-config/compare/v0.6.0...HEAD
+[Unreleased]: https://github.com/ctolon/dynamic-config/compare/v0.6.1...HEAD
+[0.6.1]: https://github.com/ctolon/dynamic-config/compare/v0.6.0...v0.6.1
 [0.6.0]: https://github.com/ctolon/dynamic-config/compare/v0.5.0...v0.6.0
 
