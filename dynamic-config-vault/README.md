@@ -122,7 +122,7 @@ complete TLS configuration and applying a second one could only mean discarding
 one of them.
 
 Nothing is read at build time: a missing certificate is an error naming the
-path. There is no way to turn verification off, and the book's [remote stores chapter](https://github.com/ctolon/dynamic-config/blob/main/book/src/remote-stores.md#tls-and-the-one-vocabulary-all-seven-speak) argues
+path. There is no way to turn verification off, and the book's [remote stores chapter](https://github.com/dynamic-config-rs/dynamic-config-remote/blob/main/book/src/remote-stores.md#tls-and-the-one-vocabulary-all-seven-speak) argues
 that one. `Auth::certificate()` is a different thing and still means what it
 did: Vault's `cert` *login* method, which authenticates with the certificate
 the connection already presents.

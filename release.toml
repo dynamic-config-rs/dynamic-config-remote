@@ -1,0 +1,63 @@
+# cargo-release configuration.
+#
+#   cargo install cargo-release
+#   cargo release patch --execute        # 0.0.1 -> 0.0.2
+#   cargo release minor --execute        # 0.0.1 -> 0.1.0
+#
+# Pre-1.0, a breaking change bumps the *minor* and everything else the patch —
+# which is what `minor` and `patch` above mean here.
+#
+# Publishing itself happens in CI: `release.yml` runs on every push to
+# `main`, notices the workspace version is new, and publishes. Nothing here
+# talks to crates.io, so a release from a laptop cannot bypass the checks —
+# and nothing here tags, either (see below).
+
+# One version across the workspace. These ten crates are one product —
+# eight stores, what they share, and the server that serves what they
+# fetch — and `store-core` is named exactly by every one of them, so they
+# cannot usefully move apart. The *engine* is named with a caret and lives
+# elsewhere; that is the boundary this repository releases across.
+shared-version = true
+consolidate-commits = true
+
+# Prepare only: bump, rewrite changelogs, commit. CI publishes.
+#
+# `main` accepts no direct pushes — not even from admins — so the release
+# commit travels like every other change: on a branch, through a pull
+# request, past the gates. The tag is minted by CI at the merge commit,
+# after publishing succeeded, because a tag created here would point at a
+# commit that is not the one `main` ends up with — the squash-merge makes
+# a new one — and a tag that exists before the publish is a tag for a
+# release that may never have happened.
+publish = false
+push = false
+tag = false
+
+tag-name = "v{{version}}"
+tag-message = "{{crate_name}} {{version}}"
+pre-release-commit-message = "release {{version}}"
+
+# Everything has to be green first. This runs before a version number moves.
+# The rotation script handles the workspace CHANGELOG.md, which the
+# per-package replacements below never touch; it no-ops after the first
+# package, so the per-package repetition of this hook is harmless.
+# The hook runs from each crate's own directory, so the script is reached
+# through the repository root, not a relative path — `just` already finds
+# the root justfile by walking up.
+pre-release-hook = ["bash", "-c", "just check && root=\"$(git rev-parse --show-toplevel)\" && \"$root\"/scripts/rotate-root-changelog.sh && \"$root\"/scripts/sync-readme-versions.sh"]
+
+# Applied to every package, so each companion crate's own changelog gets the
+# same treatment as the workspace one.
+[[pre-release-replacements]]
+file = "CHANGELOG.md"
+search = "## \\[Unreleased\\]"
+replace = "## [Unreleased]\n\n## [{{version}}] — {{date}}"
+exactly = 1
+
+# Moves the `[Unreleased]` compare link forward *and* writes the released
+# version's own reference link — previously a hand-edit, and forgotten.
+[[pre-release-replacements]]
+file = "CHANGELOG.md"
+search = "\\[Unreleased\\]: (.*)/compare/v([0-9.]+)\\.\\.\\.HEAD"
+replace = "[Unreleased]: ${1}/compare/v{{version}}...HEAD\n[{{version}}]: ${1}/compare/v${2}...v{{version}}"
+exactly = 1

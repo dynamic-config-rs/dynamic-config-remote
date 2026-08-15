@@ -110,7 +110,7 @@ carrying everything that is not TLS, and the `TlsConfig` owns the TLS slot —
 one door or the other.
 
 Nothing is read at build time: a missing certificate is an error naming the
-path. There is no way to turn verification off, and the book's [remote stores chapter](https://github.com/ctolon/dynamic-config/blob/main/book/src/remote-stores.md#tls-and-the-one-vocabulary-all-seven-speak) argues
+path. There is no way to turn verification off, and the book's [remote stores chapter](https://github.com/dynamic-config-rs/dynamic-config-remote/blob/main/book/src/remote-stores.md#tls-and-the-one-vocabulary-all-seven-speak) argues
 that one.
 
 **`new` does not prove the server is reachable.** The client connects lazily, so

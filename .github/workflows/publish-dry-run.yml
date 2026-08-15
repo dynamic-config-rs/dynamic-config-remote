@@ -1,0 +1,76 @@
+name: Publish dry run
+
+# What `cargo publish` will do, without doing it. Runs weekly rather than on
+# every push: it catches packaging problems — a missing `include`, a readme path
+# that does not resolve, metadata crates.io rejects — which change when the
+# manifests change, not when the code does.
+on:
+  push:
+    branches: [main, dev]
+    paths:
+      - "**/Cargo.toml"
+      - "**/README.md"
+      - ".github/workflows/publish-dry-run.yml"
+  schedule:
+    - cron: "31 6 * * 1"
+  workflow_dispatch:
+
+concurrency:
+  group: dry-run-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  package:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # master
+        with:
+          toolchain: stable
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+      # `etcd-client` compiles its gRPC stubs at build time and needs the
+      # `protoc` binary, which the runner image does not carry.
+      - run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
+
+      # Only the macro crate can be dry-run before a release: every other crate
+      # here depends on one below it by exact version, and a dry run resolves
+      # that from the registry rather than from the path. `cargo package`
+      # covers the rest — it builds the tarball and checks the metadata, which
+      # is where packaging mistakes actually live.
+      - run: cargo publish -p dynamic-config-store-core --dry-run
+
+      # `--workspace` resolves the exact-pinned workspace dependencies against
+      # the *local* packages instead of the registry (stable since cargo 1.90).
+      # Packaging crate by crate cannot do that, so it fails on precisely the
+      # push that matters most: the version bump, when `=x.y.z` is not on
+      # crates.io until the merge publishes it.
+      - name: package every crate
+        run: cargo package --workspace --no-verify --allow-dirty
+
+      # `dynamic-config-store-core` is the one published crate absent from
+      # this roster: it is machinery the store crates share, with no API of
+      # its own to install, so it carries a licence and no README.
+      - name: every crate carries a readme and a licence
+        run: |
+          for crate in dynamic-config-store-core dynamic-config-etcd \
+                       dynamic-config-consul dynamic-config-nats \
+                       dynamic-config-vault dynamic-config-redis \
+                       dynamic-config-s3 dynamic-config-firestore \
+                       dynamic-config-git dynamic-config-server; do
+            tarball=$(find target/package -maxdepth 1 -name "$crate-*.crate" 2>/dev/null | head -1)
+
+            if [ -z "$tarball" ]; then
+              continue
+            fi
+
+            for required in README.md LICENSE; do
+              if ! tar tzf "$tarball" | grep -q "/$required$"; then
+                echo "::error::$crate's package has no $required"
+                exit 1
+              fi
+            done
+          done

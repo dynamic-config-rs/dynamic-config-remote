@@ -36,19 +36,20 @@ security regression that no test names.
 A manifest is a claim, not a measurement. `just msrv` runs every floor.
 
 **Check CI parity.** Any list that appears in more than one place drifts:
-the `--exclude` lists in ci.yml's parallel and serial test runs, the crate
-lists in the containers job, publish-dry-run, security.yml and the justfile,
-the MSRV matrix against the MSRV tables (the book's, and README's summary).
-Diff them, don't skim them.
+the crate lists in the containers job, publish-dry-run, security.yml and
+the justfile, the MSRV matrix against the README's table, and the publish
+waves in release.yml against the dependency order. Diff them, don't skim
+them.
 
 **Audit the stacked `#[cfg]`s.** Two `#[cfg]` attributes on one item AND
 together — `#[cfg(unix)] #[cfg(not(unix))]` compiles to nothing, silently.
 Three tests here never ran for months because of one. Grep for consecutive
 cfg lines and read each pair.
 
-**Check the counts.** Twenty macro arguments, twelve crates, seventeen ci.yml jobs,
-twelve changelogs, twenty-six core examples. Every one of those numbers
-appears in documentation somewhere; recount whenever a list grows.
+**Check the counts.** Ten crates, ten ci.yml jobs, eleven changelogs,
+eight stores. Every one of those numbers appears in documentation
+somewhere — the README's table, the book's failure tables, `AGENTS.md` —
+and recounting is cheaper than a reader finding the stale one.
 
 **`cargo clippy -- -W clippy::pedantic`** for the substantive lints only:
 `unnecessary_wraps`, `needless_pass_by_value` on public API, `redundant_clone`,
@@ -61,15 +62,17 @@ appears in documentation somewhere; recount whenever a list grows.
 - Counts anywhere in the documentation — tests, examples, features, crates —
   match reality. Run the suite and count rather than trusting the last number.
 - The book's example output matches what the examples print. Run them.
-- `cargo test -p dynamic-config --test doc_surface` — the generated-method
-  list in the book and on the lib.rs front page against the macro's source.
-- Each companion crate's README is *its own*, not the workspace one.
+- Each store's chapter has a failure table, and every branch its watch loop
+  can take is a row. A branch that reports `reachable()` differently from
+  its neighbours is the bug this repository has already shipped once.
+- Each crate's README is *its own*, not the repository's.
 
 ## Release mechanics
 
-- The workspace version, the tag and the changelog agree.
-- Every crate's metadata is complete: `cargo metadata` and check for empty
-  fields rather than reading manifests by eye.
-- `cargo package --list` for each crate: README and LICENSE present, tests and
-  benches excluded.
-- Never run `cargo publish`. `cargo release` prepares; CI publishes on the tag.
+- The workspace version, the tag and every crate's changelog agree.
+- `cargo package --list` for each crate: README and LICENSE present, tests
+  and benches excluded.
+- The engine requirement is still a caret. An exact pin here would make an
+  engine upgrade wait for this repository.
+- Never run `cargo publish`. `cargo release` prepares; merging into `main`
+  publishes, in two waves.

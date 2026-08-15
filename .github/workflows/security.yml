@@ -1,0 +1,114 @@
+name: Security
+
+# Advisories are published on someone else's schedule, so this runs on one of
+# its own as well as on every change. A dependency that was clean on Monday is
+# not necessarily clean on Friday, and nothing about this repository has to
+# change for that to happen.
+# No push trigger for `dev` — same reasoning as ci.yml: dev travels through
+# pull requests, and a push twin under required checks poisons the gate.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    - cron: "17 6 * * 1"
+  workflow_dispatch:
+
+# A push during a run makes the older run's answer obsolete.
+concurrency:
+  group: security-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  deny:
+    name: advisories, licences, sources
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2
+        with:
+          # The full `check` — advisories, licences, sources *and* bans — so a
+          # duplicate-dependency policy in deny.toml is enforced somewhere
+          # rather than assumed to be enforced somewhere else.
+          command: check
+
+  unsafe:
+    name: no unsafe code
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # master
+        with:
+          toolchain: stable
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+      # Every crate here declares `#![forbid(unsafe_code)]`, which the compiler
+      # enforces. This proves the declaration is still there rather than
+      # trusting that nobody removed it in a hurry.
+      - run: |
+          for crate in dynamic-config-store-core dynamic-config-etcd \
+                       dynamic-config-consul dynamic-config-nats \
+                       dynamic-config-vault dynamic-config-redis \
+                       dynamic-config-s3 dynamic-config-firestore \
+                       dynamic-config-git; do
+            if ! grep -q '#!\[forbid(unsafe_code)\]' "$crate/src/lib.rs"; then
+              echo "::error file=$crate/src/lib.rs::missing #![forbid(unsafe_code)]"
+              exit 1
+            fi
+          done
+          # The server is a binary: its root is main.rs, so it gets its own
+          # line rather than a silent exemption from the loop above.
+          if ! grep -q '#!\[forbid(unsafe_code)\]' dynamic-config-server/src/main.rs; then
+            echo "::error file=dynamic-config-server/src/main.rs::missing #![forbid(unsafe_code)]"
+            exit 1
+          fi
+          # Tests and examples are separate crates, so the lib's `forbid`
+          # does not reach them.
+          stray=$(grep -rn 'unsafe' --include='*.rs' \
+              dynamic-config-*/tests dynamic-config-*/examples 2>/dev/null \
+            | grep -v '// ' || true)
+          if [ -n "$stray" ]; then
+            echo "::error::unsafe outside the crates that forbid it: $stray"
+            exit 1
+          fi
+  supply-chain:
+    name: dependency review
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    if: github.event_name == 'pull_request'
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      # Flags a pull request that adds a dependency with a known advisory or a
+      # licence outside the allow-list, at the point where changing course is
+      # still cheap.
+      - uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294 # v5
+        with:
+          fail-on-severity: low
+          comment-summary-in-pr: on-failure
+
+  # The one status branch protection requires from this workflow — same
+  # reasoning as CI's gate. `supply-chain` IS in the needs even though it only
+  # exists on pull requests: the gate's own check tolerates `skipped`, so a
+  # plain push passes, while a PR with a failing dependency review is blocked
+  # — which is the whole point of running it.
+  security-ok:
+    name: Security is green
+    needs: [deny, unsafe, supply-chain]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: every job this gate needs has succeeded
+        run: |
+          results='${{ toJSON(needs.*.result) }}'
+          echo "$results"
+          case "$results" in
+            *failure*|*cancelled*) exit 1 ;;
+          esac

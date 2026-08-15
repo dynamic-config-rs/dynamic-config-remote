@@ -3,7 +3,7 @@
 ## Reporting a vulnerability
 
 Please report privately, through
-[GitHub's advisory form](https://github.com/ctolon/dynamic-config/security/advisories/new),
+[GitHub's advisory form](https://github.com/dynamic-config-rs/dynamic-config-remote/security/advisories/new),
 rather than in a public issue.
 
 Include what you would want if you were on the other side: what an attacker can
@@ -55,7 +55,7 @@ is defence in depth, not a claim about memory.
 
 **Encrypt what it writes.** `save` and the cache write plaintext. The cache's
 three modes exist so that is a choice rather than a surprise; see
-[the book](book/src/persistence.md#last-known-good).
+[the book](https://dynamic-config-rs.github.io/persistence.html#last-known-good).
 
 **Validate that a config file is trusted.** If an attacker can write your config
 file, they can configure your program. That is the file's permissions to

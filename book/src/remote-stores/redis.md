@@ -100,5 +100,5 @@ those to the caller standing there, before there is a loop to be silent in,
 and half of them are deployment mistakes rather than a store that stopped
 answering.
 
-The [README](https://github.com/ctolon/dynamic-config/tree/main/dynamic-config-redis)
+The [README](https://github.com/dynamic-config-rs/dynamic-config-remote/tree/main/dynamic-config-redis)
 carries the full story; MSRV 1.88.

@@ -6,14 +6,14 @@ below the environment.
 
 | Crate | Store | Trait | Reads | Watches by | Authenticates with |
 |---|---|---|---|---|---|
-| [`dynamic-config-etcd`](https://github.com/ctolon/dynamic-config/tree/main/dynamic-config-etcd) | etcd v3 | async | one key, several keys, or a range — a whole document | a watch stream | user/password, TLS |
-| [`dynamic-config-consul`](https://github.com/ctolon/dynamic-config/tree/main/dynamic-config-consul) | Consul KV | blocking | one key, several keys, or a subtree — a whole document | a blocking query | ACL token, Kubernetes, JWT/OIDC |
-| [`dynamic-config-nats`](https://github.com/ctolon/dynamic-config/tree/main/dynamic-config-nats) | NATS JetStream KV | async | one key or several keys — a whole document | a KV change stream | token, user/password, NKey, JWT, creds |
-| [`dynamic-config-redis`](https://github.com/ctolon/dynamic-config/tree/main/dynamic-config-redis) | Redis | blocking | one key, several keys, or a prefix — a whole document | keyspace notifications | in the URL, TLS |
-| [`dynamic-config-vault`](https://github.com/ctolon/dynamic-config/tree/main/dynamic-config-vault) | Vault KV v2 | blocking | one path or several — a map of fields | polling the version | token, AppRole, Kubernetes, JWT/OIDC, userpass, LDAP, cert |
-| [`dynamic-config-s3`](https://github.com/ctolon/dynamic-config/tree/main/dynamic-config-s3) | S3, and anything speaking it | async | one object, several objects, or a prefix — a whole document | polling the ETag | the AWS credential chain |
-| [`dynamic-config-firestore`](https://github.com/ctolon/dynamic-config/tree/main/dynamic-config-firestore) | Firestore | blocking | one document or several — a map of fields | polling `updateTime` | workload identity, an access token |
-| [`dynamic-config-git`](https://github.com/ctolon/dynamic-config/tree/main/dynamic-config-git) | any git host | blocking | one file, several, or a directory — out of one commit | polling the ref advertisement | HTTPS token, SSH agent or key, anonymous |
+| [`dynamic-config-etcd`](https://github.com/dynamic-config-rs/dynamic-config-remote/tree/main/dynamic-config-etcd) | etcd v3 | async | one key, several keys, or a range — a whole document | a watch stream | user/password, TLS |
+| [`dynamic-config-consul`](https://github.com/dynamic-config-rs/dynamic-config-remote/tree/main/dynamic-config-consul) | Consul KV | blocking | one key, several keys, or a subtree — a whole document | a blocking query | ACL token, Kubernetes, JWT/OIDC |
+| [`dynamic-config-nats`](https://github.com/dynamic-config-rs/dynamic-config-remote/tree/main/dynamic-config-nats) | NATS JetStream KV | async | one key or several keys — a whole document | a KV change stream | token, user/password, NKey, JWT, creds |
+| [`dynamic-config-redis`](https://github.com/dynamic-config-rs/dynamic-config-remote/tree/main/dynamic-config-redis) | Redis | blocking | one key, several keys, or a prefix — a whole document | keyspace notifications | in the URL, TLS |
+| [`dynamic-config-vault`](https://github.com/dynamic-config-rs/dynamic-config-remote/tree/main/dynamic-config-vault) | Vault KV v2 | blocking | one path or several — a map of fields | polling the version | token, AppRole, Kubernetes, JWT/OIDC, userpass, LDAP, cert |
+| [`dynamic-config-s3`](https://github.com/dynamic-config-rs/dynamic-config-remote/tree/main/dynamic-config-s3) | S3, and anything speaking it | async | one object, several objects, or a prefix — a whole document | polling the ETag | the AWS credential chain |
+| [`dynamic-config-firestore`](https://github.com/dynamic-config-rs/dynamic-config-remote/tree/main/dynamic-config-firestore) | Firestore | blocking | one document or several — a map of fields | polling `updateTime` | workload identity, an access token |
+| [`dynamic-config-git`](https://github.com/dynamic-config-rs/dynamic-config-remote/tree/main/dynamic-config-git) | any git host | blocking | one file, several, or a directory — out of one commit | polling the ref advertisement | HTTPS token, SSH agent or key, anonymous |
 
 Each has its own README with the whole story, and an example that runs against a
 real server in a container.
@@ -338,7 +338,7 @@ branch, each silence with the reason at the branch:
 
 A *callback's* own error is not the store's failure either: the store
 answered, and what the document then does is
-[`ConfigStatus`](reload-lifecycle.md#operating-a-configuration)'s half of the
+[`ConfigStatus`](https://dynamic-config-rs.github.io/reload-lifecycle.html#operating-a-configuration)'s half of the
 picture.
 
 git needs none of it. Its watch is a poll, a poll is a fetch, and a fetch
@@ -424,7 +424,7 @@ etcd's `ConnectOptions`, a `ureq::Agent` — means options this project has
 never heard of keep working, which is a real property and one nothing here
 took away. It also had two costs. Four of the eight stores had no such door
 at all, so an enterprise behind a private CA could not use them. And none
-of it could ever cross into the [Python wheels](https://ctolon.github.io/dynamic-config/python/remote-stores.html),
+of it could ever cross into the [Python wheels](https://dynamic-config-rs.github.io/python/remote-stores.html),
 because there is no Python spelling for a `tonic` TLS configuration or a
 `ureq` agent — which is exactly why the new surface is **data**, and why a
 later binding has something to bind to.
@@ -530,10 +530,10 @@ it.
 ### Worked examples
 
 Two, and both run:
-[`vault_private_ca`](https://github.com/ctolon/dynamic-config/blob/main/dynamic-config-vault/examples/vault_private_ca.rs)
+[`vault_private_ca`](https://github.com/dynamic-config-rs/dynamic-config-remote/blob/main/dynamic-config-vault/examples/vault_private_ca.rs)
 reads a secret from a Vault behind an authority the machine has never heard
 of, and
-[`etcd_client_certificate`](https://github.com/ctolon/dynamic-config/blob/main/dynamic-config-etcd/examples/etcd_client_certificate.rs)
+[`etcd_client_certificate`](https://github.com/dynamic-config-rs/dynamic-config-remote/blob/main/dynamic-config-etcd/examples/etcd_client_certificate.rs)
 presents a client certificate to an etcd started with `--client-cert-auth`.
 
 ## Writing your own

@@ -177,7 +177,7 @@ bumps the patch. A change to the minimum supported Rust version is breaking.
   is an error naming the path. Tested with planted material on every new error
   path, including the one `reqwest` renders rather than this crate.
 
-[Unreleased]: https://github.com/ctolon/dynamic-config/compare/v0.6.1...HEAD
+[Unreleased]: https://github.com/dynamic-config-rs/dynamic-config-remote/compare/v0.6.1...HEAD
 [0.6.1]: https://github.com/ctolon/dynamic-config/compare/v0.6.0...v0.6.1
 [0.6.0]: https://github.com/ctolon/dynamic-config/compare/v0.5.0...v0.6.0
 

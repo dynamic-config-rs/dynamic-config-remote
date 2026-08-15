@@ -80,7 +80,7 @@ an hour ago reads as healthy until something calls `refresh_remote_async()`.
 What a failure moves is narrow on purpose — the streak and the last failure,
 never the staleness clock — so `up` goes to zero while
 `remote_last_fetch_seconds` keeps ageing, which is the pair an alert wants.
-See [telemetry](../telemetry.md).
+See [telemetry](https://dynamic-config-rs.github.io/telemetry.html).
 
 Worth knowing what that does *not* cover here, because it follows from the
 paragraph above: a server that goes away is not a failed watch. `async-nats`
@@ -90,5 +90,5 @@ this crate adds no retry layer. What reaches the loop is a stream that
 stopped: a deleted bucket, a consumer that is gone, a value that is not a
 document.
 
-The [README](https://github.com/ctolon/dynamic-config/tree/main/dynamic-config-nats)
+The [README](https://github.com/dynamic-config-rs/dynamic-config-remote/tree/main/dynamic-config-nats)
 carries the full story and the `nats_watching` example; MSRV 1.88.

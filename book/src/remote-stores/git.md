@@ -324,5 +324,5 @@ advertisement, and only a ref that moved costs a transfer. The push half needs
 nothing new: whoever terminates a GitHub or GitLab webhook calls
 `remote_sink().apply(..)`.
 
-The [README](https://github.com/ctolon/dynamic-config/tree/main/dynamic-config-git)
+The [README](https://github.com/dynamic-config-rs/dynamic-config-remote/tree/main/dynamic-config-git)
 carries the full story and the credential table; MSRV 1.85.

@@ -84,11 +84,11 @@ cargo run -p dynamic-config-server --features tls --example tls_mutual
 generates a CA, a server certificate and a client certificate, runs the
 server over TLS, and shows all three cases end to end.
 
-The threat model, in full, is [in the book](https://ctolon.github.io/dynamic-config/config-server/threat-model.html).
+The threat model, in full, is [in the book](https://dynamic-config-rs.github.io/remote/config-server/threat-model.html).
 
 ## Documentation
 
-- [The Config Server](https://ctolon.github.io/dynamic-config/config-server.html) — configuration, deployment, and what each endpoint is for
+- [The Config Server](https://dynamic-config-rs.github.io/remote/config-server.html) — configuration, deployment, and what each endpoint is for
 - [`dynamic-config`] — the library it serves
 
 [`dynamic-config`]: https://crates.io/crates/dynamic-config

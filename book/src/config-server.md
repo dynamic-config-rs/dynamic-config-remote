@@ -1,6 +1,6 @@
 # The Config Server
 
-[`dynamic-config-server`](https://github.com/ctolon/dynamic-config/tree/main/dynamic-config-server)
+[`dynamic-config-server`](https://github.com/dynamic-config-rs/dynamic-config-remote/tree/main/dynamic-config-server)
 serves configuration over HTTP: one resolved document per
 **application** and **profile**, handed to a caller that presented a
 credential scoped to that application.
@@ -10,7 +10,7 @@ Server](https://spring.io/projects/spring-cloud-config)'s, deliberately —
 an operator who has run one already knows what `GET /billing/prod`
 returns, and that transfer was worth more than a scheme of our own. What
 else this project owes to other people's work is in
-[CREDITS.md](https://github.com/ctolon/dynamic-config/blob/main/CREDITS.md).
+[CREDITS.md](https://github.com/dynamic-config-rs/dynamic-config-remote/blob/main/CREDITS.md).
 
 Everything else in this workspace hands configuration to the process that
 called it. This crate hands it **over a socket**, which makes it a
@@ -69,7 +69,7 @@ pushes every explanation through `Explanation::redacted()`, on every
 path, not only the ones a schema called secret. It is the library's own
 redaction rather than a second copy of it; applying it unconditionally is
 the server's decision, and it is the same one
-[the CLI](cli.md) makes when it prints `***` unless asked otherwise.
+[the CLI](https://dynamic-config-rs.github.io/cli.html) makes when it prints `***` unless asked otherwise.
 
 ```json
 {
@@ -174,7 +174,7 @@ application's behalf.
 
 ## Metrics, and why they need a credential
 
-`GET /metrics` is the library's [telemetry](telemetry.md) rendering of
+`GET /metrics` is the library's [telemetry](https://dynamic-config-rs.github.io/telemetry.html) rendering of
 the same `ConfigStatus` that `/status` returns — one set of numbers, two
 shapes — labelled `application` and `profile`, for the sections the
 calling principal may read and no others. Six families, `6 × sections`
@@ -356,7 +356,7 @@ whole_document = true
 Per section, because two sections may read files of different shapes.
 Everything downstream is unchanged — the environment prefix, the watcher,
 `/paths`, `/explain` and the audit log. See
-[Document Shape](document-shape.md).
+[Document Shape](https://dynamic-config-rs.github.io/document-shape.html).
 
 Unknown keys in this file are refused rather than ignored. A misspelled
 key in a security-relevant file is a key the operator believes is doing

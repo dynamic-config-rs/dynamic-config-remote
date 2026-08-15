@@ -1,0 +1,63 @@
+# The remote stores, and the server that serves what they fetch.
+#
+# Ten crates on one version, because they are one product: eight stores,
+# the internals they share, and a server whose whole job is to hand a
+# section to a client that cannot reach etcd itself. `cargo release` moves
+# them together, the way it did while they lived in the engine's
+# repository.
+#
+# The engine comes from crates.io, named with a caret. That is the whole
+# reason these crates could leave: a store built against `dynamic-config
+# 0.6` keeps working when the engine ships 0.6.2, and neither repository
+# has to wait for the other.
+[workspace]
+resolver = "2"
+members = [
+    "dynamic-config-store-core",
+    "dynamic-config-etcd",
+    "dynamic-config-consul",
+    "dynamic-config-vault",
+    "dynamic-config-nats",
+    "dynamic-config-redis",
+    "dynamic-config-s3",
+    "dynamic-config-firestore",
+    "dynamic-config-git",
+    "dynamic-config-server",
+]
+
+[workspace.package]
+version = "0.6.1"
+edition = "2021"
+# Higher than the engine's on purpose: a companion pays for what it pulls
+# in, and three of these clients need more. The per-crate `rust-version`
+# raises it further where the client demands it.
+rust-version = "1.85"
+license = "MIT"
+repository = "https://github.com/dynamic-config-rs/dynamic-config-remote"
+homepage = "https://github.com/dynamic-config-rs/dynamic-config-remote"
+authors = ["Cevat Batuhan Tolon <cevatbatuhan.tolon@gmail.com>"]
+categories = ["api-bindings", "config"]
+keywords = ["config", "hot-reload", "settings", "watch", "remote"]
+# Everything a build needs and nothing else. Tests and benches are excluded
+# rather than included by omission: the fixtures they read are not in the
+# package either, so shipping them would only ship something that cannot
+# run.
+exclude = [
+    "tests/**",
+    "benches/**",
+]
+
+[workspace.dependencies]
+# The engine, from crates.io. Caret: a store crate is something a user
+# chooses *alongside* the engine, and an exact pin there would turn an
+# engine upgrade into a wall.
+dynamic-config = { version = "0.6", default-features = false }
+# These crates' shared internals — credentials, TLS, retry, redaction.
+# Published because cargo will not let a published crate depend on one
+# that is not; exact, because it moves with them in one release.
+dynamic-config-store-core = { version = "=0.6.1", path = "dynamic-config-store-core" }
+
+# One profile for the benchmarks to be worth reading.
+[profile.bench]
+lto = "thin"
+codegen-units = 1

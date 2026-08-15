@@ -1,0 +1,21 @@
+[book]
+title = "dynamic-config: remote stores"
+authors = ["Cevat Batuhan Tolon"]
+description = "The eight remote stores — etcd, Consul, Vault, NATS, Redis, S3, Firestore and git — and the server that serves what they fetch."
+language = "en"
+src = "src"
+
+[output.html]
+git-repository-url = "https://github.com/dynamic-config-rs/dynamic-config-remote"
+edit-url-template = "https://github.com/dynamic-config-rs/dynamic-config-remote/edit/dev/book/src/{path}"
+site-url = "/remote/"
+
+[output.html.fold]
+enable = true
+level = 1
+
+[output.html.search]
+limit-results = 20
+use-boolean-and = true
+boost-title = 2
+boost-hierarchy = 2

@@ -84,7 +84,7 @@ else, so `dynamic_config_remote_last_fetch_seconds` keeps ageing while
 answering* and *how stale what it last said has become*. Reporting is
 infallible and silent: a loop is never handed a failure to report a failure. A
 `fetch()` needs none of it, because a fetch already records itself.
-[The remote store's own numbers](../telemetry.md#the-remote-stores-own-numbers)
+[The remote store's own numbers](https://dynamic-config-rs.github.io/telemetry.html#the-remote-stores-own-numbers)
 
-The [README](https://github.com/ctolon/dynamic-config/tree/main/dynamic-config-firestore)
+The [README](https://github.com/dynamic-config-rs/dynamic-config-remote/tree/main/dynamic-config-firestore)
 carries the full story, tested against Google's own emulator; MSRV 1.85.

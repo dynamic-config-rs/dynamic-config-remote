@@ -124,7 +124,7 @@ authentication failure a long way from the cause.
 The certificate is parsed here purely in order to refuse: the SDK's rustls
 connector calls `.expect("cert parsable")` on the material, so one it cannot
 read would otherwise be a panic at the first connection. There is no way to
-turn verification off, and the book's [remote stores chapter](https://github.com/ctolon/dynamic-config/blob/main/book/src/remote-stores.md#tls-and-the-one-vocabulary-all-seven-speak) argues that one.
+turn verification off, and the book's [remote stores chapter](https://github.com/dynamic-config-rs/dynamic-config-remote/blob/main/book/src/remote-stores.md#tls-and-the-one-vocabulary-all-seven-speak) argues that one.
 
 ## Timeouts
 

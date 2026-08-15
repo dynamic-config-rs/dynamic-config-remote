@@ -182,7 +182,7 @@ reaches the blocking query too, which builds its own client with a longer
 timeout.
 
 Nothing is read at build time: a missing certificate is an error naming the
-path. There is no way to turn verification off, and the book's [remote stores chapter](https://github.com/ctolon/dynamic-config/blob/main/book/src/remote-stores.md#tls-and-the-one-vocabulary-all-seven-speak) argues
+path. There is no way to turn verification off, and the book's [remote stores chapter](https://github.com/dynamic-config-rs/dynamic-config-remote/blob/main/book/src/remote-stores.md#tls-and-the-one-vocabulary-all-seven-speak) argues
 that one.
 
 ## Bringing your own HTTP client

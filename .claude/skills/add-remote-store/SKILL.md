@@ -41,7 +41,9 @@ nothing to re-export.
 
 1. **`Cargo.toml`** — `rust-version` of its own with a comment (a companion pays
    for what it pulls in), `readme = "README.md"`, `documentation`,
-   `exclude.workspace = true`, and the crate in the workspace `members`.
+   `exclude.workspace = true`, and the crate in this repository's workspace
+   `members` — plus a row in `release.yml`'s second publish wave, or it is
+   built and never published.
 2. **`src/lib.rs`** — `#![forbid(unsafe_code)]`, `#![deny(missing_docs)]`, the
    trait impl, `describe()` naming the address and the key.
 3. **`from_client` / `with_agent`** — a caller who already talks to the store

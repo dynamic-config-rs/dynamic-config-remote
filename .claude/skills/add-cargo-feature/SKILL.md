@@ -12,15 +12,15 @@ hits them.
 
 ## The five places
 
-1. **`dynamic-config/Cargo.toml`** — the feature itself, its optional
-   dependencies (`dep:` syntax), and *the `full` list*. `full` is documented
-   as "all of the above"; a feature it misses makes that sentence a lie.
-2. **The two feature tables** — `dynamic-config/src/lib.rs`'s module docs and
-   the book's (`book/src/msrv-features.md`). Same rows, same order.
-3. **The MSRV story** — if the new dependency raises the floor, that is: a row
-   in ci.yml's `msrv` matrix, a line in `just msrv`, a row in the MSRV
-   tables (the book's, and the summary in `README.md`), and a note that MSRV
-   is *measured* (`cargo check` against the
+1. **The store crate's `Cargo.toml`** — the feature itself and its optional
+   dependencies (`dep:` syntax). The engine's own features are not this
+   repository's: they live where the engine does.
+2. **The crate's module docs and its chapter** in
+   `book/src/remote-stores/`. A feature that changes what a watch can do
+   is also a row in that chapter's failure table.
+3. **The MSRV story** — if the new dependency raises the floor, that is: a
+   row in ci.yml's `msrv` matrix, a line in `just msrv`, a row in
+   `README.md`'s MSRV table, and a note that MSRV is *measured* (`cargo check` against the
    real toolchain, not the dependency's declared figure — `age` says 1.74 and
    needs 1.85).
 4. **cargo-hack** — nothing to add (`--feature-powerset` picks it up), but run
@@ -45,7 +45,7 @@ silently vanishes for everyone. The pattern that works, used today by
 // in expand/ — no cfg, just a call:
 ::dynamic_config::__the_methods!(#args);
 
-// in dynamic-config/src/redirects.rs — the cfg lives where the feature exists:
+// the cfg lives where the feature exists:
 #[cfg(feature = "the-feature")]
 #[macro_export] #[doc(hidden)]
 macro_rules! __the_methods { (...) => { pub fn the_method(...) {...} } }

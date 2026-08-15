@@ -277,5 +277,5 @@ pushes into, taken once at wiring time — is the
 [parent chapter's](../remote-stores.md#watching-a-store); nothing about it
 is store-specific, which is the point. If the store you wrote deserves a
 place in this repository as a companion crate, the contributor guide in
-[docs/CONTRIBUTOR-ONBOARDING.md](https://github.com/ctolon/dynamic-config/blob/main/docs/CONTRIBUTOR-ONBOARDING.md)
+[docs/CONTRIBUTOR-ONBOARDING.md](https://github.com/dynamic-config-rs/dynamic-config-remote/blob/main/docs/CONTRIBUTOR-ONBOARDING.md)
 carries the workspace plumbing that this chapter deliberately leaves out.

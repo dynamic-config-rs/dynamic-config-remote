@@ -186,7 +186,7 @@ Initial release.
 - Credentials through `async-nats`'s own `ConnectOptions` (re-exported), and
   `from_client` for a connection the program already has.
 
-[Unreleased]: https://github.com/ctolon/dynamic-config/compare/v0.6.1...HEAD
+[Unreleased]: https://github.com/dynamic-config-rs/dynamic-config-remote/compare/v0.6.1...HEAD
 [0.6.1]: https://github.com/ctolon/dynamic-config/compare/v0.6.0...v0.6.1
 [0.6.0]: https://github.com/ctolon/dynamic-config/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/ctolon/dynamic-config/compare/v0.4.0...v0.5.0

@@ -93,8 +93,8 @@ to zero — the pair that says both *the agent is not answering* and *how stale
 what it last said has become*. Reporting is infallible and silent: a loop is
 never handed a failure to report a failure. A `fetch()` needs none of it,
 because a fetch already records itself.
-[The remote store's own numbers](../telemetry.md#the-remote-stores-own-numbers)
+[The remote store's own numbers](https://dynamic-config-rs.github.io/telemetry.html#the-remote-stores-own-numbers)
 
-The [README](https://github.com/ctolon/dynamic-config/tree/main/dynamic-config-consul)
+The [README](https://github.com/dynamic-config-rs/dynamic-config-remote/tree/main/dynamic-config-consul)
 carries the full story, the builder-defaults table and the
 `consul_kubernetes` example; MSRV 1.85.

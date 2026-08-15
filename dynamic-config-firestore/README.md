@@ -123,7 +123,7 @@ go there directly: an enterprise TLS-inspecting proxy, or an emulator behind
 `with_endpoint`. `with_agent` **and** `with_tls` together are refused at the
 first request, because an agent already carries a complete TLS configuration.
 
-There is no way to turn verification off, and the book's [remote stores chapter](https://github.com/ctolon/dynamic-config/blob/main/book/src/remote-stores.md#tls-and-the-one-vocabulary-all-seven-speak) argues that one.
+There is no way to turn verification off, and the book's [remote stores chapter](https://github.com/dynamic-config-rs/dynamic-config-remote/blob/main/book/src/remote-stores.md#tls-and-the-one-vocabulary-all-seven-speak) argues that one.
 
 ## Timeouts
 

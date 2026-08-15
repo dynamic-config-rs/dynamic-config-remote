@@ -1,0 +1,399 @@
+name: CI
+
+# No push trigger for `dev`: everything on dev travels through a pull
+# request anyway, and a push run would twin the PR run on the same commit —
+# under *required* checks, a deduplicating cancellation poisons the gate
+# (a cancelled twin's "CI is green" reads as failure and blocks the merge).
+# `main` keeps its push trigger because a rebase-merge mints a new SHA that
+# no PR run ever checked.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+# One run cancels the previous on the same ref: a pull request pushed three
+# times in a minute should not occupy three runners proving the same thing
+# about two obsolete commits.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: -D warnings
+  # A failing build should say what failed, not where in a backtrace it gave up.
+  RUST_BACKTRACE: 1
+
+jobs:
+  fmt:
+    runs-on: ubuntu-latest
+    # A hung job should fail, not sit on a runner for six hours.
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # master
+        with:
+          toolchain: stable
+          components: rustfmt
+      - run: cargo fmt --all -- --check
+
+  clippy:
+    runs-on: ubuntu-latest
+    # A hung job should fail, not sit on a runner for six hours.
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # master
+        with:
+          toolchain: stable
+          components: clippy
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+      # `etcd-client` compiles its gRPC stubs at build time and needs the
+      # `protoc` binary, which the runner image does not carry.
+      - run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
+      - run: cargo clippy --workspace --all-targets --all-features
+      - run: cargo clippy --workspace --all-targets --no-default-features
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # master
+        with:
+          toolchain: stable
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+      # The watcher is the reason this runs on three operating systems: notify
+      # uses a different backend on each, and directory watching plus atomic
+      # saves behave differently enough to be worth proving every time.
+      #
+      # The companion crates are excluded here and get their own job: their
+      # tests drive real servers in containers, which only one of these three
+      # runners has.
+      # The seven container-backed crates are excluded here and run in
+      # `containers`, which has a Docker daemon: their suites drive real
+      # servers, and only one of these three runners could. What is left is
+      # `store-core`, git — whose fixture is a repository in a temporary
+      # directory — and the server.
+      - run: >
+          cargo test --workspace --all-features
+          --exclude dynamic-config-etcd
+          --exclude dynamic-config-consul
+          --exclude dynamic-config-nats
+          --exclude dynamic-config-vault
+          --exclude dynamic-config-redis
+          --exclude dynamic-config-s3
+          --exclude dynamic-config-firestore
+      # The examples are documentation people run; a stale one is worse
+      # than a missing one. The git store's need no server, and the
+      # server's TLS example is behind `required-features`, so neither is
+      # reached by the run above.
+      - run: >
+          cargo build --examples
+          -p dynamic-config-etcd -p dynamic-config-consul
+          -p dynamic-config-nats -p dynamic-config-vault
+          -p dynamic-config-redis -p dynamic-config-s3
+          -p dynamic-config-firestore -p dynamic-config-git
+      - run: cargo build -p dynamic-config-server --all-features --examples
+      # The config server's own features are opt-in, so the workspace run
+      # above — which asks for `full`, a feature this crate does not have —
+      # tests it with *none* of them: `tests/tls.rs` and `tests/client.rs`
+      # are `#![cfg(feature = ...)]` in their entirety and compile to
+      # nothing. The suite that asserts a handshake still demands a
+      # certificate is exactly the one that was not running.
+      #
+      # `justfile` has had this line since the crate landed; this is CI
+      # catching up to it.
+      #
+      # Linux only, and stated rather than assumed: what these suites prove
+      # — that a handshake demands a certificate, that a section that is not
+      # yours is the same 404 — is the same on every platform, and the one
+      # part that is not (the refusal to read a world-readable key) is
+      # already `#[cfg(unix)]`. The three-runner matrix exists for the
+      # *watcher*, which this crate does not own.
+      - if: runner.os == 'Linux'
+        run: cargo test -p dynamic-config-server --all-features
+      # One of them is *run*: `ini_provider` is the book's worked answer to
+      # "can I plug in a parser for a format you do not read", and a book
+      # snippet whose output no longer matches is worse than no snippet. It
+      # needs no setup and writes nothing.
+      - run: cargo run -p dynamic-config --example ini_provider --features figment,json
+      # The compile-fail diagnostics that only exist when a feature is *off*
+      # cannot be seen by a build that has it on.
+      - run: cargo test -p dynamic-config --no-default-features --features json --test ui
+      # Tests that share a static or a fixture path pass alone and race in
+      # parallel. Running the suite a second time single-threaded catches the
+      # opposite mistake: a test that only passes because another one ran first.
+      - run: >
+          cargo test --workspace --all-features
+          --exclude dynamic-config-etcd
+          --exclude dynamic-config-consul
+          --exclude dynamic-config-nats
+          --exclude dynamic-config-vault
+          --exclude dynamic-config-redis
+          --exclude dynamic-config-s3
+          --exclude dynamic-config-firestore
+          -- --test-threads=1
+        if: matrix.os == 'ubuntu-latest'
+      # Doctests document the default feature set, so they are skipped when it
+      # is switched off; everything else still has to pass.
+      - run: cargo test -p dynamic-config --no-default-features --lib --tests
+      # The async surface with no runtime crate in the graph at all — driven by
+      # a hand-written executor in `tests/runtime_agnostic.rs`.
+      - run: cargo test -p dynamic-config --no-default-features --features async,json
+
+  containers:
+    runs-on: ubuntu-latest
+    # A hung job should fail, not sit on a runner for six hours.
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # master
+        with:
+          toolchain: stable
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+      # Real servers, no mocks. A mock of etcd would only ever confirm what we
+      # already believed about etcd — and three of the facts these tests pin (a
+      # lazy gRPC connect, a bucket that must already exist, a first blocking
+      # query that answers immediately) are ones a mock would have got wrong.
+      #
+      # The watch tests wait on real change notifications, so this job is slower
+      # than the rest and deliberately so: a watch that only works on a laptop
+      # is not a watch.
+      #
+      # `etcd-client` compiles its gRPC stubs at build time and needs the
+      # `protoc` binary, which the runner image does not carry.
+      - run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
+      # Pulled ahead of time so a Docker Hub hiccup fails as a pull rather than
+      # as a mysterious test timeout.
+      - run: |
+          docker pull hashicorp/vault:1.17
+          docker pull hashicorp/consul:1.16.1
+          docker pull quay.io/coreos/etcd:v3.5.17
+          docker pull nats:2.10.14
+          docker pull redis:7-alpine
+          docker pull minio/minio:RELEASE.2025-02-28T09-55-16Z
+          docker pull gcr.io/google.com/cloudsdktool/google-cloud-cli:emulators
+          docker pull ghcr.io/shopify/toxiproxy:2.12.0
+      # `--test-threads=2`, unlike the justfile's full-speed local run: each
+      # test boots its own server container, and four Vaults racing to start
+      # on a shared two-core runner is how `WaitContainer(StartupTimeout)`
+      # happens. Two at a time is slower and boring, which is the point.
+      - run: >
+          cargo test
+          -p dynamic-config-etcd
+          -p dynamic-config-consul
+          -p dynamic-config-nats
+          -p dynamic-config-vault
+          -p dynamic-config-redis
+          -p dynamic-config-s3
+          -p dynamic-config-firestore
+          -- --test-threads=2
+      # Chaos: the store unplugged mid-watch, and put back. `#[ignore]`d, so
+      # the run above skipped them and this is what runs them — two containers
+      # per test, and a toxiproxy between the source and a store that never
+      # restarts. A restarted container comes back on a different host port,
+      # which is why "it recovered" needs a proxy to be assertable at all.
+      #
+      # Three loops, one per shape: Redis' subscription and etcd's stream end
+      # loudly, Consul's blocking query recovers on its own. The three pollers
+      # prove the same property in their scripted-server suites, with no
+      # Docker, and those already ran in `test`.
+      - run: >
+          cargo test
+          -p dynamic-config-redis
+          -p dynamic-config-consul
+          -p dynamic-config-etcd
+          --test chaos
+          -- --ignored --test-threads=1
+      # The examples in these crates are documentation people run against a real
+      # server; a stale one is worse than a missing one.
+      - run: >
+          cargo build --examples
+          -p dynamic-config-etcd
+          -p dynamic-config-consul
+          -p dynamic-config-nats
+          -p dynamic-config-vault
+          -p dynamic-config-redis
+          -p dynamic-config-s3
+          -p dynamic-config-firestore
+
+  msrv:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Each crate declares its own floor, and one representative
+          # `check` keeps the declaration honest — a floor nobody compiles
+          # against is a number in a manifest. `package` names a crate
+          # rather than a feature set.
+          - rust: "1.85"
+            package: dynamic-config-etcd
+          - rust: "1.85"
+            package: dynamic-config-consul
+          - rust: "1.88"
+            package: dynamic-config-nats
+          - rust: "1.85"
+            package: dynamic-config-vault
+          - rust: "1.88"
+            package: dynamic-config-redis
+          - rust: "1.88"
+            package: dynamic-config-s3
+          - rust: "1.85"
+            package: dynamic-config-firestore
+          # What the store crates share holds nothing but `std`, so it must
+          # never be the thing that raises one of their floors.
+          - rust: "1.71"
+            package: dynamic-config-store-core
+          - rust: "1.85"
+            package: dynamic-config-git
+          # axum 0.8 declares 1.80, and a server carries a web framework.
+          - rust: "1.80"
+            package: dynamic-config-server
+          # TLS is off by default, so the floor has to be checked with it on
+          # too — rustls and tokio-rustls both declare 1.71, and this row is
+          # what keeps that true rather than assumed.
+          - rust: "1.80"
+            package: dynamic-config-server
+            flags: "--all-features"
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # master
+        with:
+          toolchain: stable
+      - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # master
+        with:
+          toolchain: ${{ matrix.rust }}
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+      # The lockfile has to be produced by a cargo new enough to honour
+      # `resolver.incompatible-rust-versions = "fallback"` from .cargo/config.toml.
+      # Left to the old toolchain, resolution takes the newest release of every
+      # transitive dependency and the check fails on a dependency's edition
+      # rather than on anything this crate did.
+      # `etcd-client` compiles its gRPC stubs at build time and needs the
+      # `protoc` binary, which the runner image does not carry.
+      - run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
+      - run: cargo +stable generate-lockfile
+      # `check`, not `test`: dev-dependencies (testcontainers, tempfile)
+      # track stable and would drag the floor up for reasons users never
+      # pay for.
+      - run: cargo check -p ${{ matrix.package }} --locked ${{ matrix.flags }}
+
+  docs:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      RUSTDOCFLAGS: -D warnings --cfg docsrs
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # master
+        with:
+          toolchain: nightly
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+      # `etcd-client` compiles its gRPC stubs at build time and needs the
+      # `protoc` binary, which the runner image does not carry.
+      - run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
+      # Nightly, because the feature badges use `doc_cfg` — the same way
+      # docs.rs builds it.
+      - run: cargo doc --workspace --all-features --no-deps
+
+  docs-links:
+    name: documentation links resolve
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      # A README is the first thing anyone reads and the last thing anyone
+      # tests. A dead anchor in it is a small bug that is very easy to ship.
+      - uses: lycheeverse/lychee-action@e7477775783ea5526144ba13e8db5eec57747ce8 # v2
+        with:
+          args: >-
+            --no-progress
+            --include-fragments
+            --max-retries 3
+            --retry-wait-time 5
+            --exclude '^https://github\.com/dynamic-config-rs/'
+            --exclude '^https://docs\.rs/dynamic-config'
+            --exclude '^https://dynamic-config-rs\.github\.io'
+            README.md CONTRIBUTING.md SECURITY.md RELEASING.md
+            AGENTS.md CHANGELOG.md scripts/README.md
+            dynamic-config*/README.md dynamic-config*/CHANGELOG.md
+            book/src/*.md book/src/remote-stores/*.md
+            book/src/config-server/*.md .claude/skills/*/SKILL.md
+          fail: true
+
+  minimal-versions:
+    name: the declared minimums resolve
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # master
+        with:
+          toolchain: nightly
+      - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # master
+        with:
+          toolchain: stable
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+      # A `serde = "1.0"` that actually needs 1.0.210 compiles against a fresh
+      # lockfile and breaks for the first user with an older one. This resolves
+      # *our* requirements to their oldest allowed version and builds against
+      # that.
+      #
+      # `direct-minimal-versions`, not `minimal-versions`: the latter minimises
+      # transitive dependencies too, and then fails inside crates that
+      # under-declare their own minimums — which is a bug report to send
+      # elsewhere, not a signal about this repository.
+      - run: cargo +nightly generate-lockfile -Z direct-minimal-versions
+      # `check`, not `test`: dev-dependencies minimise to versions from 2015
+      # that no longer compile, and this crate makes no promise about the
+      # oldest `trybuild` anyone could build its test suite with.
+      - run: cargo +stable check -p dynamic-config --locked --all-features
+
+  actionlint:
+    name: workflows lint clean
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      # The workflows are code that only runs in production. actionlint
+      # catches the typo'd `if:` expression and the misspelled input before a
+      # release does.
+      - uses: raven-actions/actionlint@3d39aea434753780c3b3d4a1a31c854b4dbf49d7 # v2
+
+  # The one status branch protection requires. Requiring every job by name
+  # breaks the moment a matrix row is renamed; requiring this gate never
+  # does. `if: always()` because a gate that is skipped when a dependency
+  # fails would count as "not failed" and wave the merge through.
+  ci-ok:
+    name: CI is green
+    needs:
+      - fmt
+      - clippy
+      - test
+      - containers
+      - msrv
+      - docs
+      - docs-links
+      - minimal-versions
+      - actionlint
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: every job this gate needs has succeeded
+        run: |
+          results='${{ toJSON(needs.*.result) }}'
+          echo "$results"
+          case "$results" in
+            *failure*|*cancelled*) exit 1 ;;
+          esac

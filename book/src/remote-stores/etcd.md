@@ -86,7 +86,7 @@ last *attempt*, and a store that stopped answering an hour ago reads as
 healthy until something calls `refresh_remote_async()`. What a failure moves
 is narrow on purpose — the streak and the last failure, never the staleness
 clock — so `up` goes to zero while `remote_last_fetch_seconds` keeps ageing,
-which is the pair an alert wants. See [telemetry](../telemetry.md).
+which is the pair an alert wants. See [telemetry](https://dynamic-config-rs.github.io/telemetry.html).
 
 **A replaced auth token is not a failure.** etcd's simple tokens expire, so a
 watch that outlives one logs in again and resumes from the last delivered
@@ -97,6 +97,6 @@ delivery or a fetch clears the streak, it would stay there until the next
 change. A re-authentication that *fails*, a stream that will not
 re-establish, and a recovery cap that runs out all report.
 
-The [README](https://github.com/ctolon/dynamic-config/tree/main/dynamic-config-etcd)
+The [README](https://github.com/dynamic-config-rs/dynamic-config-remote/tree/main/dynamic-config-etcd)
 carries the full story, the builder-defaults table and the
 `etcd_watching` example; MSRV 1.85.

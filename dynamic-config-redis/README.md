@@ -102,7 +102,7 @@ Redis expresses all of it, behind the same `tls` feature `rediss://` needs
 anyway. TLS material on a `redis://` URL is refused, naming the scheme: it is a
 deployment that believes it is encrypted and is not.
 
-There is no way to turn verification off; the book's [remote stores chapter](https://github.com/ctolon/dynamic-config/blob/main/book/src/remote-stores.md#tls-and-the-one-vocabulary-all-seven-speak) argues that one, and
+There is no way to turn verification off; the book's [remote stores chapter](https://github.com/dynamic-config-rs/dynamic-config-remote/blob/main/book/src/remote-stores.md#tls-and-the-one-vocabulary-all-seven-speak) argues that one, and
 the client's own `#insecure` URL fragment stays where it is, under its own
 frightening name.
 

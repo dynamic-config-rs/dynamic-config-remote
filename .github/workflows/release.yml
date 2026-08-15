@@ -1,0 +1,253 @@
+name: Release
+
+# Releases are managed through the pull-request pipeline, not by hand-pushed
+# tags: merging a version-bump PR into `main` IS the release. Every push to
+# `main` lands here; the `decide` job checks whether the workspace version is
+# new, and everything downstream is skipped when it is not — so a docs merge
+# is a green no-op and a version bump is a release.
+#
+# The tag is an *output* of a successful publish, minted by CI at the merge
+# commit. Since `main` only accepts pull requests that passed the gates, a
+# release inherits the whole review pipeline by construction.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  decide:
+    name: is this a release?
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      version: ${{ steps.check.outputs.version }}
+      release: ${{ steps.check.outputs.release }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - id: check
+        run: |
+          version=$(grep -m1 '^version' Cargo.toml | cut -d'"' -f2)
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+          if git ls-remote --exit-code --tags origin "refs/tags/v$version" >/dev/null 2>&1; then
+            echo "v$version is already tagged — nothing to release."
+            echo "release=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "v$version is new — this push is a release."
+            echo "release=true" >> "$GITHUB_OUTPUT"
+          fi
+
+  verify:
+    name: verify before publishing
+    needs: decide
+    if: needs.decide.outputs.release == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # master
+        with:
+          toolchain: stable
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+
+      - name: the changelog names this version
+        env:
+          VERSION: ${{ needs.decide.outputs.version }}
+        run: |
+          if ! grep -q "^## \[$VERSION\]" CHANGELOG.md; then
+            echo "::error file=CHANGELOG.md::no section for $VERSION"
+            exit 1
+          fi
+
+      # `etcd-client` compiles its gRPC stubs at build time and needs
+      # `protoc`.
+      - run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
+      - run: cargo fmt --all -- --check
+      - run: cargo clippy --workspace --all-targets --all-features
+      # The container suites are `#[ignore]`d: they need Docker images
+      # pulled and a long leash, they gate merges to main already, and a
+      # release build re-proving them adds an hour rather than confidence.
+      - run: cargo test --workspace --all-features
+
+      # The version bump keeps the semver promise it makes: compared against
+      # the baseline already on crates.io. Pre-1.0, a breaking change needs
+      # the minor bumped — this is the check that notices when it was not.
+      - uses: taiki-e/install-action@7f4eb899022d8fe70b20c4f3de697aa85c309026 # v2
+        with:
+          tool: cargo-semver-checks
+      # A crate that has never been released has no baseline to compare
+      # against, and `cargo semver-checks` treats that as an error rather
+      # than as nothing to do — so one unpublished member fails the whole
+      # workspace run, which is exactly what happens on the release that
+      # introduces a crate. 0.6 introduced three.
+      #
+      # The exclusions are *derived* rather than written down: a crate is
+      # skipped only while crates.io has never heard of it, so the release
+      # that first publishes it excludes it once and every release after
+      # that checks it like any other. A list in this file would have to be
+      # remembered, and would go stale silently — which is the failure mode
+      # this whole job exists to prevent.
+      #
+      # `publish != []` drops the members that are `publish = false`; the
+      # Python extension crates go to PyPI and have no crates.io name at
+      # all. Anything but 200 or 404 fails the step: a rate limit or an
+      # outage must not read as "unpublished, skip it".
+      - name: the semver promise, against what is actually published
+        run: |
+          set -euo pipefail
+
+          agent='dynamic-config release (github.com/dynamic-config-rs/dynamic-config-remote)'
+          excludes=()
+
+          for crate in $(cargo metadata --no-deps --format-version 1 \
+              | jq -r '.packages[] | select(.publish != []) | .name'); do
+            code=$(curl --silent --output /dev/null --write-out '%{http_code}' \
+              --header "User-Agent: ${agent}" \
+              "https://crates.io/api/v1/crates/${crate}")
+
+            case "${code}" in
+              200) ;;
+              404)
+                echo "::notice::${crate} is not on crates.io yet — first release, so there is no baseline to compare against"
+                excludes+=(--exclude "${crate}")
+                ;;
+              *)
+                echo "::error::crates.io answered ${code} for ${crate}; refusing to guess whether it is published"
+                exit 1
+                ;;
+            esac
+          done
+
+          cargo semver-checks --workspace ${excludes[@]+"${excludes[@]}"}
+
+  publish:
+    name: publish to crates.io
+    needs: [decide, verify]
+    if: needs.decide.outputs.release == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    environment: crates-io
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # master
+        with:
+          toolchain: stable
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+
+      # `cargo publish` verifies each tarball by *building* it, and
+      # etcd-client compiles its gRPC stubs at build time — the same protoc
+      # the verify job needs, needed here too.
+      - run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
+
+      # Three waves, in dependency order. Each crate pins the one below it
+      # exactly, so a wave cannot succeed until the previous one is on the
+      # registry — which is why this is a sequence rather than a matrix.
+      #
+      # `--no-verify` is deliberately *not* used: the verification build is the
+      # last chance to catch a package that resolves locally through a path
+      # dependency and nowhere else.
+      #
+      # Idempotent on purpose: a version already on the registry is *skipped*,
+      # not died on. crates.io versions are permanent, so after a partial
+      # failure — a rate limit, most likely — the only way forward is a rerun
+      # that publishes the remainder.
+      - name: publish, in dependency order
+        run: |
+          publish() {
+            local out
+            if out=$(cargo publish -p "$1" 2>&1); then
+              echo "published $1"
+            elif grep -qE "already (uploaded|exists)" <<<"$out"; then
+              echo "$1 is already on the registry — skipped"
+            else
+              printf '%s\n' "$out"
+              return 1
+            fi
+          }
+
+          # Every store crate depends on this one, so it is a wave of its
+          # own. It is published rather than `publish = false` because
+          # cargo refuses to package a published crate against a path
+          # dependency that is not on the registry.
+          publish dynamic-config-store-core
+
+          sleep 45   # the index needs a moment before dependents resolve
+
+          for crate in dynamic-config-etcd dynamic-config-consul \
+                       dynamic-config-nats dynamic-config-vault \
+                       dynamic-config-redis dynamic-config-s3 \
+                       dynamic-config-firestore dynamic-config-git \
+                       dynamic-config-server; do
+            publish "$crate"
+          done
+
+  tag-and-release:
+    name: tag and GitHub release
+    needs: [decide, publish]
+    if: needs.decide.outputs.release == 'true' && needs.publish.result == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      # The tag marks what was actually published: it is minted only after
+      # every crate is on the registry, at the merge commit that did it.
+      - name: tag the release
+        env:
+          VERSION: ${{ needs.decide.outputs.version }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag -a "v$VERSION" -m "dynamic-config $VERSION" "$GITHUB_SHA"
+          git push origin "v$VERSION"
+
+      - name: notes from the changelog
+        env:
+          VERSION: ${{ needs.decide.outputs.version }}
+        run: |
+          # The section for this version, up to the next one.
+          awk -v v="$VERSION" '
+            $0 ~ "^## \\[" v "\\]" { found = 1; next }
+            found && /^## \[/      { exit }
+            found                  { print }
+          ' CHANGELOG.md > release-notes.md
+
+          echo "--- notes ---"
+          cat release-notes.md
+
+      # An SBOM, attached to the release rather than gating it.
+      # A consumer asking "what is in this" had a Cargo lockfile, a
+      # `pyproject.toml` and no single answer; these are that answer, in the
+      # format the question is usually asked in.
+      #
+      # Deliberately *not* a gate: an SBOM that fails a build fails it for a
+      # fact about somebody else's published package, and the advisory gate
+      # in security.yml is where that belongs.
+      - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # master
+        with:
+          toolchain: stable
+      - name: the bill of materials, per ecosystem
+        continue-on-error: true
+        run: |
+          mkdir -p sbom
+
+          cargo install cargo-cyclonedx --locked --version 0.5.9
+          # One document per crate, written next to each manifest: sixteen
+          # crates are sixteen published artefacts, and a consumer asks about
+          # the one they depend on.
+          cargo cyclonedx --all --format json
+          find . -name "*.cdx.json" -not -path "./sbom/*" -exec mv {} sbom/ \;
+
+          ls -la sbom
+
+      - uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228 # v3
+        with:
+          tag_name: v${{ needs.decide.outputs.version }}
+          name: v${{ needs.decide.outputs.version }}
+          body_path: release-notes.md
+          files: sbom/*.cdx.json

@@ -121,7 +121,7 @@ would put a private key on a disk that never asked for one.
 
 Naming a certificate authority also sets `require_tls`, so a `nats://` URL
 fails rather than quietly negotiating plaintext. There is no way to turn
-verification off, and the book's [remote stores chapter](https://github.com/ctolon/dynamic-config/blob/main/book/src/remote-stores.md#tls-and-the-one-vocabulary-all-seven-speak) argues that one.
+verification off, and the book's [remote stores chapter](https://github.com/dynamic-config-rs/dynamic-config-remote/blob/main/book/src/remote-stores.md#tls-and-the-one-vocabulary-all-seven-speak) argues that one.
 
 ## Sharing a client
 
