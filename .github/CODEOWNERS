@@ -1,0 +1,8 @@
+# Everything, until there is somebody else. A CODEOWNERS file that lists one
+# person is not bureaucracy — it is what makes GitHub request a review at all.
+*                       @ctolon
+
+# The parts where a mistake is expensive and a second opinion is cheap.
+/SECURITY.md            @ctolon
+/deny.toml              @ctolon
+/.github/workflows/     @ctolon

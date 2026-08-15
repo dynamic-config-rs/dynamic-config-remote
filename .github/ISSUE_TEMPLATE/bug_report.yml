@@ -1,0 +1,65 @@
+name: Bug report
+description: Something behaves differently from what the documentation says
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time. The most useful reports are the ones where
+        somebody else can reproduce the problem without guessing.
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: And what you expected instead.
+      placeholder: |
+        `load()` returned `ErrorKind::Missing` for `pool.max_size`, but the key
+        is set in `config.toml`.
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: How to reproduce
+      description: >
+        The struct with its `#[dynamic_config(..)]` attribute, the config file,
+        and any environment variables involved. A small standalone `main.rs`
+        beats a description of one.
+      render: rust
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: dynamic-config version
+      placeholder: "0.1.0"
+    validations:
+      required: true
+
+  - type: input
+    id: features
+    attributes:
+      label: Enabled features
+      description: From your `Cargo.toml`.
+      placeholder: 'json, watch, tokio'
+    validations:
+      required: true
+
+  - type: input
+    id: toolchain
+    attributes:
+      label: Rust version and platform
+      description: "`rustc -Vv` output, or just the version and OS."
+      placeholder: "1.85.0, Linux x86_64"
+    validations:
+      required: true
+
+  - type: textarea
+    id: output
+    attributes:
+      label: Error message or log output
+      description: Verbatim, please — the wording carries the provenance.
+      render: text

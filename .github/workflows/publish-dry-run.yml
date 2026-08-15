@@ -56,7 +56,12 @@ jobs:
       # its own to install, so it carries a licence and no README.
       - name: every crate carries a readme and a licence
         run: |
-          for crate in dynamic-config-store-core dynamic-config-etcd \
+          # `dynamic-config-store-core` is not in this list, and that is
+          # the one decision here: it deliberately ships no README, because
+          # it is machinery these crates share rather than something to
+          # depend on, and a README would be a front page for a crate whose
+          # whole documentation is "do not".
+          for crate in dynamic-config-etcd \
                        dynamic-config-consul dynamic-config-nats \
                        dynamic-config-vault dynamic-config-redis \
                        dynamic-config-s3 dynamic-config-firestore \

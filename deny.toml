@@ -36,6 +36,21 @@ ignore = [
     # vulnerable code path occurs in the SDK's identity-cache usage. Re-add
     # entries here if RustSec ships criteria that match.
 ]
+# `aws-sdk-s3` is pinned to 1.112.0 or newer (GHSA-g59m-gf8j-gjf5), which
+# regenerating the lockfile undoes: the MSRV-fallback resolver picks 1.96,
+# the newest release compatible with the *lowest* floor in the workspace.
+# The same trap `time` is in, one crate over. After any `cargo
+# generate-lockfile`, re-apply:
+#
+#   cargo update -p aws-sdk-s3 --precise 1.112.0
+#
+# `quinn-proto` (0.11.15) and `serde_with` (3.21.0) are pinned for the same
+# reason and by the same command. Both arrive through dev-dependencies —
+# testcontainers — so they never reach a published artefact, but a scan
+# that is red for a week is a scan nobody reads.
+#
+#   cargo update -p quinn-proto --precise 0.11.15
+#   cargo update -p serde_with --precise 3.21.0
 # `time` is pinned in Cargo.lock to 0.3.47 or newer (RUSTSEC-2026-0009), which
 # declares rust-version 1.88. That is fine — it is reached only through the
 # companion crates and dev-dependencies, never through the core crate, whose
