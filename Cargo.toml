@@ -28,10 +28,11 @@ members = [
 [workspace.package]
 version = "0.6.1"
 edition = "2021"
-# Higher than the engine's on purpose: a companion pays for what it pulls
-# in, and three of these clients need more. The per-crate `rust-version`
-# raises it further where the client demands it.
-rust-version = "1.85"
+# The floor `dynamic-config-store-core` actually has — it holds nothing but
+# `std`, so it must never be the thing that raises one of its dependents'
+# floors. Every other crate here declares its own, higher, because a
+# companion pays for what it pulls in.
+rust-version = "1.71"
 license = "MIT"
 repository = "https://github.com/dynamic-config-rs/dynamic-config-remote"
 homepage = "https://github.com/dynamic-config-rs/dynamic-config-remote"

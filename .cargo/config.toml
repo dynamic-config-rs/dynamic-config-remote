@@ -1,0 +1,9 @@
+# Resolve dependencies against the declared `rust-version` rather than always
+# taking the newest release. Without this, a transitive dependency that moves to
+# a newer edition (hashbrown 0.17 did exactly that) silently raises the MSRV of
+# a crate that never asked for it, and the README's floor becomes fiction.
+#
+# Requires cargo 1.84+ to generate the lockfile; older cargo versions ignore the
+# key and simply use the lockfile as written, which is what the MSRV CI jobs do.
+[resolver]
+incompatible-rust-versions = "fallback"

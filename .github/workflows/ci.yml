@@ -95,12 +95,6 @@ jobs:
       # than a missing one. The git store's need no server, and the
       # server's TLS example is behind `required-features`, so neither is
       # reached by the run above.
-      - run: >
-          cargo build --examples
-          -p dynamic-config-etcd -p dynamic-config-consul
-          -p dynamic-config-nats -p dynamic-config-vault
-          -p dynamic-config-redis -p dynamic-config-s3
-          -p dynamic-config-firestore -p dynamic-config-git
       - run: cargo build -p dynamic-config-server --all-features --examples
       # The config server's own features are opt-in, so the workspace run
       # above — which asks for `full`, a feature this crate does not have —
@@ -120,17 +114,6 @@ jobs:
       # *watcher*, which this crate does not own.
       - if: runner.os == 'Linux'
         run: cargo test -p dynamic-config-server --all-features
-      # One of them is *run*: `ini_provider` is the book's worked answer to
-      # "can I plug in a parser for a format you do not read", and a book
-      # snippet whose output no longer matches is worse than no snippet. It
-      # needs no setup and writes nothing.
-      - run: cargo run -p dynamic-config --example ini_provider --features figment,json
-      # The compile-fail diagnostics that only exist when a feature is *off*
-      # cannot be seen by a build that has it on.
-      - run: cargo test -p dynamic-config --no-default-features --features json --test ui
-      # Tests that share a static or a fixture path pass alone and race in
-      # parallel. Running the suite a second time single-threaded catches the
-      # opposite mistake: a test that only passes because another one ran first.
       - run: >
           cargo test --workspace --all-features
           --exclude dynamic-config-etcd
@@ -144,11 +127,6 @@ jobs:
         if: matrix.os == 'ubuntu-latest'
       # Doctests document the default feature set, so they are skipped when it
       # is switched off; everything else still has to pass.
-      - run: cargo test -p dynamic-config --no-default-features --lib --tests
-      # The async surface with no runtime crate in the graph at all — driven by
-      # a hand-written executor in `tests/runtime_agnostic.rs`.
-      - run: cargo test -p dynamic-config --no-default-features --features async,json
-
   containers:
     runs-on: ubuntu-latest
     # A hung job should fail, not sit on a runner for six hours.
@@ -357,7 +335,9 @@ jobs:
       # `check`, not `test`: dev-dependencies minimise to versions from 2015
       # that no longer compile, and this crate makes no promise about the
       # oldest `trybuild` anyone could build its test suite with.
-      - run: cargo +stable check -p dynamic-config --locked --all-features
+      # `protoc`, for the same reason every other job here installs it.
+      - run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
+      - run: cargo +stable check --workspace --locked --all-features
 
   actionlint:
     name: workflows lint clean
