@@ -92,6 +92,18 @@ jobs:
         with:
           fail-on-severity: low
           comment-summary-in-pr: on-failure
+          # The one advisory this repository has already answered, and the
+          # answer is in `osv-scanner.toml` at length: `lru 0.12.5` reaches
+          # the graph through `aws-sdk-s3`'s identity cache, which pins
+          # `^0.12.2` — the fix is 0.16.3 and no version of this workspace
+          # can reach it until the SDK moves. Neither vulnerable path
+          # occurs in the SDK's usage: it caches credentials by key and
+          # never iterates mutably.
+          #
+          # This action reads no configuration file of its own, so the
+          # decision is repeated here rather than left to disagree with the
+          # scanner's.
+          allow-ghsas: GHSA-rhfx-m35p-ff5j
 
   # The one status branch protection requires from this workflow — same
   # reasoning as CI's gate. `supply-chain` IS in the needs even though it only
