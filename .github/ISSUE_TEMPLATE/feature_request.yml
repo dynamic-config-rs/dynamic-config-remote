@@ -1,0 +1,64 @@
+name: Feature request
+description: Something the crate should be able to do and cannot
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Before opening one, it is worth a look at
+        [Not planned](../blob/main/README.md#not-planned): several things are
+        listed there as deliberately refused, each with the reasoning and with
+        what would reopen it. If you disagree with one, say so here — a refusal
+        with a bad reason should be revisited.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: The problem
+      description: >
+        What are you trying to do, and where does the crate stop you? Describe
+        the situation rather than the API you have in mind — the best design
+        often is not the one either of us thought of first.
+      placeholder: |
+        Our platform sets `DATABASE_URL` and I cannot rename it, so the prefixed
+        environment layer cannot reach it.
+    validations:
+      required: true
+
+  - type: textarea
+    id: workaround
+    attributes:
+      label: What you do today
+      description: The workaround, if there is one, and why it is not enough.
+
+  - type: textarea
+    id: shape
+    attributes:
+      label: What it might look like
+      description: Optional. A sketch of the API, if you have one in mind.
+      render: rust
+
+  - type: dropdown
+    id: scope
+    attributes:
+      label: Where it belongs
+      options:
+        - The core crate
+        - A companion crate (etcd, Consul, NATS, Vault, Redis, S3, Firestore)
+        - A new companion crate
+        - Not sure
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: constraints
+    attributes:
+      label: Constraints this has to respect
+      description: >
+        These are load-bearing for the crate. Tick the ones you have thought
+        about; leave the rest — it is a prompt, not a barrier.
+      options:
+        - label: Reading configuration stays lock-free and allocation-free on the hot path
+        - label: No new mandatory dependency (an optional feature is fine)
+        - label: Does not raise the core crate's MSRV of 1.71
+        - label: Secrets stay out of logs and diagnostics

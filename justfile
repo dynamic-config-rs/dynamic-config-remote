@@ -24,7 +24,9 @@ lint:
 # `store-core`, git — its fixture is a repository in a temporary
 # directory — and the server.
 test:
-    cargo test --workspace --all-features \
+    # Default features: the server's TLS suite asserts a refusal that is
+    # `#[cfg(unix)]`, and it gets its own line below.
+    cargo test --workspace \
         --exclude dynamic-config-etcd --exclude dynamic-config-consul \
         --exclude dynamic-config-nats --exclude dynamic-config-vault \
         --exclude dynamic-config-redis --exclude dynamic-config-s3 \

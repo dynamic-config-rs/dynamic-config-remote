@@ -1,0 +1,11 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Security vulnerability
+    url: https://github.com/dynamic-config-rs/dynamic-config-remote/security/advisories/new
+    about: >
+      Please report privately rather than in a public issue. See SECURITY.md.
+  - name: Question about usage
+    url: https://github.com/dynamic-config-rs/dynamic-config-remote/discussions
+    about: >
+      For "how do I…", a discussion gets a better answer than an issue — and
+      stays findable for the next person.

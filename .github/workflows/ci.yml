@@ -82,8 +82,14 @@ jobs:
       # servers, and only one of these three runners could. What is left is
       # `store-core`, git — whose fixture is a repository in a temporary
       # directory — and the server.
+      #
+      # Default features, not `--all-features`: the server's TLS suite
+      # asserts that a world-readable key is refused, and that refusal is
+      # `#[cfg(unix)]` — on Windows the server starts and the assertion is
+      # the thing that is wrong. That suite has its own Linux-only line
+      # below, which is where it belongs.
       - run: >
-          cargo test --workspace --all-features
+          cargo test --workspace
           --exclude dynamic-config-etcd
           --exclude dynamic-config-consul
           --exclude dynamic-config-nats
@@ -115,7 +121,7 @@ jobs:
       - if: runner.os == 'Linux'
         run: cargo test -p dynamic-config-server --all-features
       - run: >
-          cargo test --workspace --all-features
+          cargo test --workspace
           --exclude dynamic-config-etcd
           --exclude dynamic-config-consul
           --exclude dynamic-config-nats

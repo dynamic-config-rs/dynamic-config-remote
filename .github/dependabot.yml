@@ -1,0 +1,39 @@
+version: 2
+
+updates:
+  # Cargo updates are grouped rather than one pull request per crate: ten
+  # crates sharing a client library is ten patch bumps nobody reads
+  # separately.
+  - package-ecosystem: cargo
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    groups:
+      patch-and-minor:
+        update-types: [minor, patch]
+    # Majors arrive on their own, because they are the ones with a decision
+    # in them: four of these crates re-export pieces of their client's API,
+    # so a client's major bump is a breaking change here.
+    ignore:
+      - dependency-name: etcd-client
+        update-types: [version-update:semver-major]
+      - dependency-name: async-nats
+        update-types: [version-update:semver-major]
+      - dependency-name: redis
+        update-types: [version-update:semver-major]
+      - dependency-name: aws-sdk-s3
+        update-types: [version-update:semver-major]
+      - dependency-name: axum
+        update-types: [version-update:semver-major]
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+    # One grouped bump instead of a queue: an action pin is reviewed the same
+    # way whether one moved or five did.
+    groups:
+      actions:
+        patterns: ["*"]
