@@ -1261,7 +1261,7 @@ dependencies = [
 
 [[package]]
 name = "dynamic-config-consul"
-version = "0.6.1"
+version = "0.6.2"
 dependencies = [
  "base64 0.23.1",
  "dynamic-config",
@@ -1276,7 +1276,7 @@ dependencies = [
 
 [[package]]
 name = "dynamic-config-etcd"
-version = "0.6.1"
+version = "0.6.2"
 dependencies = [
  "dynamic-config",
  "dynamic-config-store-core",
@@ -1288,7 +1288,7 @@ dependencies = [
 
 [[package]]
 name = "dynamic-config-firestore"
-version = "0.6.1"
+version = "0.6.2"
 dependencies = [
  "dynamic-config",
  "dynamic-config-store-core",
@@ -1301,7 +1301,7 @@ dependencies = [
 
 [[package]]
 name = "dynamic-config-git"
-version = "0.6.1"
+version = "0.6.2"
 dependencies = [
  "dynamic-config",
  "dynamic-config-store-core",
@@ -1327,7 +1327,7 @@ dependencies = [
 
 [[package]]
 name = "dynamic-config-nats"
-version = "0.6.1"
+version = "0.6.2"
 dependencies = [
  "async-nats",
  "dynamic-config",
@@ -1341,7 +1341,7 @@ dependencies = [
 
 [[package]]
 name = "dynamic-config-redis"
-version = "0.6.1"
+version = "0.6.2"
 dependencies = [
  "dynamic-config",
  "dynamic-config-store-core",
@@ -1354,7 +1354,7 @@ dependencies = [
 
 [[package]]
 name = "dynamic-config-s3"
-version = "0.6.1"
+version = "0.6.2"
 dependencies = [
  "aws-config",
  "aws-sdk-s3",
@@ -1371,7 +1371,7 @@ dependencies = [
 
 [[package]]
 name = "dynamic-config-server"
-version = "0.6.1"
+version = "0.6.2"
 dependencies = [
  "axum",
  "bytes",
@@ -1394,14 +1394,14 @@ dependencies = [
 
 [[package]]
 name = "dynamic-config-store-core"
-version = "0.6.1"
+version = "0.6.2"
 dependencies = [
  "dynamic-config",
 ]
 
 [[package]]
 name = "dynamic-config-vault"
-version = "0.6.1"
+version = "0.6.2"
 dependencies = [
  "dynamic-config",
  "dynamic-config-store-core",
