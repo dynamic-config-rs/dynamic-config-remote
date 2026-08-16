@@ -35,6 +35,8 @@ deliberately, with an entry under Changed saying so.
 
 ## [Unreleased]
 
+## [0.6.2] — 2026-08-16
+
 ### Changed
 
 - **These crates left the engine's repository.** Eight stores, what they
@@ -43,6 +45,13 @@ deliberately, with an entry under Changed saying so.
   released on their own schedule. Nothing about them changed: same crate
   names, same versions, same API. What changed is the dependency on the
   engine — `=0.6.1` became `"0.6"`, so upgrading the engine no longer
-  requires a release here.
+  requires a release here. **That takes effect with this release**: the
+  0.6.1 crates on the registry still carry the exact pin.
 
-[Unreleased]: https://github.com/dynamic-config-rs/dynamic-config-remote/compare/v0.6.1...HEAD
+- **Every crate's `repository` and `homepage` point at the new home**, and
+  each README's badges and book links with them. The chapters for these
+  crates are now their own book, at
+  [dynamic-config-rs.github.io/remote/](https://dynamic-config-rs.github.io/remote/).
+
+[Unreleased]: https://github.com/dynamic-config-rs/dynamic-config-remote/compare/v0.6.2...HEAD
+[0.6.2]: https://github.com/dynamic-config-rs/dynamic-config-remote/compare/v0.6.1...v0.6.2

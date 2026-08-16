@@ -15,7 +15,7 @@ Or mount its router in a service you already run:
 
 ```toml
 [dependencies]
-dynamic-config-server = "0.6.1"
+dynamic-config-server = "0.6.2"
 ```
 
 ## What it serves
