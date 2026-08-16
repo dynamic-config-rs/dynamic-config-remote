@@ -183,6 +183,12 @@ jobs:
                        dynamic-config-server; do
             publish "$crate"
           done
+        env:
+          # The token lives in the `crates-io` environment declared above,
+          # which is the only place this job can read it from — and a job
+          # that forgets to *pass* it fails at the first `cargo publish`
+          # with "no token found", after the release commit has landed.
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
 
   tag-and-release:
     name: tag and GitHub release
