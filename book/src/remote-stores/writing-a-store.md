@@ -1,10 +1,9 @@
 # Writing a Store
 
 A store is one trait implementation, and — if the protocol allows it — a
-watch loop. Everything else is polish. Eight of these ship from this
-repository, deliberately alike, and the likeness is the point: they are the
-reference corpus, and the fastest way to a correct ninth is to copy the
-closest one rather than starting from the shape in your head.
+watch loop. Everything else is polish. Eight of these ship here, and they
+are alike on purpose: they are the reference corpus, and the fastest way to
+a correct ninth is to copy the closest one.
 
 | If the client is… | Read | Trait |
 |---|---|---|
@@ -162,7 +161,7 @@ Two more things the corpus settled, both worth copying:
 
 ## The watch loop
 
-The core deliberately does not own this loop: a watch is long-lived and
+The core does not own this loop: a watch is long-lived and
 protocol-shaped in a way one trait cannot honestly cover. Your store owns
 it, and the conventions below are what make seven different protocols feel
 like one feature. The ladder for *how* to detect a change:
@@ -275,7 +274,7 @@ The application-side choreography — `set_remote`, the explicit
 `refresh_remote()`, and the `remote_sink()` your watch loop's callback
 pushes into, taken once at wiring time — is the
 [parent chapter's](../remote-stores.md#watching-a-store); nothing about it
-is store-specific, which is the point. If the store you wrote deserves a
-place in this repository as a companion crate, the contributor guide in
+is store-specific. For a store that should ship here as a companion crate,
+the contributor guide in
 [docs/CONTRIBUTOR-ONBOARDING.md](https://github.com/dynamic-config-rs/dynamic-config-remote/blob/main/docs/CONTRIBUTOR-ONBOARDING.md)
-carries the workspace plumbing that this chapter deliberately leaves out.
+carries the workspace plumbing this chapter leaves out.

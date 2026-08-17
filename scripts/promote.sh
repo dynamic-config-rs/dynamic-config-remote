@@ -25,11 +25,36 @@ echo "── pushing dev"
 git push -u origin dev
 
 echo "── ensuring the pull request exists"
+# Everything below reads `main` as origin has it. `promotion-title.sh`
+# fetches it too, but unguarded — on a repository whose `main` was never
+# pushed, that fetch fails and `set -e` ends the run right here having
+# printed nothing at all.
+if ! git fetch -q origin main; then
+  # git has printed why. The common one on a new repository is that `main`
+  # was never pushed at all, and there is a one-liner for that:
+  echo "could not read 'main' from origin. If it does not exist yet:"
+  echo "  git push origin dev:main"
+  exit 1
+fi
+
+# Nothing to promote is not an error, but `gh pr create` treats it as one
+# — "No commits between main and dev" — and `set -e` would, again, end the
+# run with no explanation. This is the state a repository is in right after
+# `dev` is branched from `main` and pushed.
+ahead=$(git rev-list --count origin/main..HEAD)
+
+if [ "$ahead" -eq 0 ]; then
+  echo "dev is level with main — nothing to promote."
+  exit 0
+fi
+echo "dev is $ahead commit(s) ahead of main"
+
 # The title carries the version when this push is a release: "release 0.3.0"
 # scans better in the PR list than a row of "promote dev to main", and the
 # squash-merge reuses it as main's commit subject. One rule, one copy:
 . "$(dirname "$0")/promotion-title.sh"
 promotion_title
+
 
 pr=$(gh pr list --base main --head dev --state open --json number -q '.[0].number')
 if [ -z "$pr" ]; then

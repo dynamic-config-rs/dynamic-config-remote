@@ -54,7 +54,7 @@ The startup-delivery and deleted-key columns are identical on purpose — they
 are decisions rather than accidents, and they hold across all eight store
 crates.
 Transport failures retry too, except where the table names an error that ends
-the watch, deliberately, so a supervisor can restart it:
+the watch, so a supervisor can restart it:
 
 - **The current value is not delivered at startup.** A watch reports changes;
   announcing the value the caller already has would make every restart look like

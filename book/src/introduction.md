@@ -3,8 +3,8 @@
 A configuration does not always live in a file next to the binary. It
 lives in etcd because a cluster puts it there, in Vault because it is a
 secret, in S3 because a deployment writes it once and a hundred pods read
-it. This book is the eight crates that read those, and the server that
-hands a section to a program which can reach none of them.
+it. This book covers the eight crates that read those, and the server
+that hands a section to a program which can reach none of them.
 
 ```toml
 [dependencies]
@@ -27,8 +27,8 @@ layering, the same validation, the same last-known-good cache, the same
 `explain`. A store this project has never heard of works the same way, and
 [Writing a Store](remote-stores/writing-a-store.md) is that contract.
 
-**Where this fits.** The engine, the macro and the loader are a separate
-crate and a separate book: [dynamic-config](https://dynamic-config-rs.github.io/).
+**Where this fits.** The engine, the macro and the loader are
+[dynamic-config](https://dynamic-config-rs.github.io/), with its own book.
 The bindings wrap the same engine for
 [Python](https://dynamic-config-rs.github.io/python/) and
 [Node.js](https://dynamic-config-rs.github.io/node/), and each of them
@@ -36,4 +36,4 @@ ships these stores as a second package.
 
 Each crate names the engine with a caret (`"0.6"`), so an engine patch
 release reaches a store without the store being re-released — and a
-breaking one is picked up here deliberately, in its own time.
+breaking one is picked up here explicitly, in its own time.

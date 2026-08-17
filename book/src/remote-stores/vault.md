@@ -38,7 +38,7 @@ request per path and is not atomic**, and every one of those requests is a
 line in the audit log on every fetch. One unreadable path fails the whole
 fetch, naming it.
 
-There is deliberately **no prefix form**, and `LIST` is not what is missing:
+There is **no prefix form**, and `LIST` is not what is missing:
 folding a subtree into one section would make `myapp/db` and `myapp/server`
 collide on `host`. [The reason in
 full](../remote-stores.md#two-stores-hold-fields-not-documents).

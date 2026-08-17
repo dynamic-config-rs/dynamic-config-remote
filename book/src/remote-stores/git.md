@@ -69,7 +69,7 @@ a monorepo.
 ## How long a fetch may take
 
 `.with_timeout(..)` is thirty seconds by default and bounds one attempt. What it
-reaches depends on which transport the source uses, which is worth stating
+reaches depends on which transport the source uses, which is worth knowing
 plainly rather than promising a number twice:
 
 | Phase | With `.tls(..)` — this crate's client | Without — `gix`'s own |
@@ -89,7 +89,7 @@ would have cost redirect following and `http.extraHeader` for every caller,
 including the ones whose host answers in milliseconds, to work around one field
 `gix` does not read. Saying which transport bounds what is the better trade.
 
-## Which ref, and why a branch is the default
+## Which ref
 
 | | Moves | Reproducible | For |
 |---|---|---|---|
@@ -126,7 +126,7 @@ the moment the host refuses it so the next attempt obtains a fresh one. One
 replacement and one retry, never a loop — a second refusal means the grant is
 wrong, and retrying would turn a clear failure into a hang.
 
-Two things it deliberately does **not** do, because doing them badly would be
+Two things it does **not** do, because doing them badly would be
 worse than not doing them:
 
 - **The GitHub App JWT-to-token exchange is not here.** It needs an RS256
@@ -138,7 +138,7 @@ worse than not doing them:
   does not put it on a command line where `ps` can read it. Use an agent —
   `ssh-add` the key once, which is what an agent is for.
 
-## Several files, and why this store can watch them
+## Several files
 
 `.path(..)` takes a path, or a `Keys` for a set. A bare string is still one
 file.

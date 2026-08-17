@@ -18,7 +18,7 @@ DbConfig::refresh_remote()?;
 ```
 
 **What it reads:** one key holding a whole configuration document. A
-Redis *hash* — one field per setting — is deliberately not the mapping: a
+Redis *hash* — one field per setting — is not the mapping: a
 hash cannot hold a nested table without inventing a flattening
 convention, and a document already has one.
 
@@ -94,7 +94,7 @@ notifies again, and one delivery clears the streak, so a blip looks like a
 blip and a credential the server has started refusing climbs. A **dead
 subscription** ends the watch, and it is the failure nobody notices: the loop
 runs on a thread whose result is usually dropped, so configuration silently
-stops updating. What is deliberately *not* reported is a refusal at the door —
+stops updating. What is *not* reported is a refusal at the door —
 a prefix, no format, no keys, notifications off — because `watch()` returns
 those to the caller standing there, before there is a loop to be silent in,
 and half of them are deployment mistakes rather than a store that stopped
