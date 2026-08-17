@@ -85,3 +85,6 @@ htmlcov/
 # and a design doc that outlives its implementation is a second source of
 # truth nobody updates.
 /docs/implementation/
+
+# The book's build output.
+book/book/

@@ -202,7 +202,7 @@ bad one.
 | Redis, prefix | yes | **no** — the re-read has to *find* the keys with `SCAN`, a cursor over many commands | refused |
 | NATS, named list | yes — `watch_many` filters the stream on the set | **no** — no batch read; the re-read is one get per key | refused |
 | Vault, S3 | no — neither pushes; the loop polls a version or an ETag, and those belong to one secret or one object | **no** | refused |
-| Firestore, named list | no — the push API is a gRPC stream this crate deliberately does not carry | **no** — `:batchGet` is one request but not one snapshot | refused |
+| Firestore, named list | no — the push API is a gRPC stream this crate does not carry | **no** — `:batchGet` is one request but not one snapshot | refused |
 
 Consul's is the cheapest of the four and the only one that re-reads nothing: its
 answer already *is* the document. etcd and Redis each re-read, and each pins the
@@ -311,7 +311,7 @@ Consul::new(address, "myapp/db.json")
 ```
 
 What it records is narrow on purpose: the failure streak and the last
-failure's *kind*, never a store's address. `last_fetch` deliberately keeps
+failure's *kind*, never a store's address. `last_fetch` keeps
 ageing, because the pair is the alert — *up went to zero* **and** *the
 document being served is an hour old*. A failure that reset the clock would
 hide the second half.
@@ -417,8 +417,8 @@ let vault = Vault::new("https://vault.internal:8200", "secret", "myapp/db")
 it. There are four settings, in two spellings each — a file path or PEM
 bytes — and **nothing else**: no client type appears in any signature.
 
-That is the whole design decision, and it is worth saying why, because
-[sharing a client you already have](#sharing-a-client-you-already-have) was
+That is the whole design decision.
+[Sharing a client you already have](#sharing-a-client-you-already-have) was
 the answer before and still is. Handing a store *its client's own* type —
 etcd's `ConnectOptions`, a `ureq::Agent` — means options this project has
 never heard of keep working, which is a real property and one nothing here
@@ -451,7 +451,7 @@ and is not, which is worse than a program that will not start.
 the only byte-taking door is a hand-built `rustls::ClientConfig` — a direct
 `rustls` dependency and a crypto-provider decision, for one spelling. So the
 byte forms are refused, pointing at the file forms. The obvious workaround
-is deliberately not taken: writing the material to a temporary file would put
+is not taken: writing the material to a temporary file would put
 a private key on a disk that never asked for one.
 
 **S3 has no client certificate.** The AWS SDK reaches TLS through

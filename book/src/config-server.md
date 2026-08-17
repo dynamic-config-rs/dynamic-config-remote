@@ -6,10 +6,10 @@ serves configuration over HTTP: one resolved document per
 credential scoped to that application.
 
 The URL shape is [Spring Cloud Config
-Server](https://spring.io/projects/spring-cloud-config)'s, deliberately —
-an operator who has run one already knows what `GET /billing/prod`
-returns, and that transfer was worth more than a scheme of our own. What
-else this project owes to other people's work is in
+Server](https://spring.io/projects/spring-cloud-config)'s: an operator who
+has run one already knows what `GET /billing/prod` returns, and that
+transfer is worth more than a new scheme. What else this project owes to
+other people's work is in
 [CREDITS.md](https://github.com/dynamic-config-rs/dynamic-config-remote/blob/main/CREDITS.md).
 
 Everything else in this workspace hands configuration to the process that
@@ -62,7 +62,7 @@ The document endpoint is the handover — that is what a config server is
 *for*. Every other endpoint returns shape, provenance or counts.
 
 `explain` is where the line is drawn wider than the library draws it. In
-the library, an explanation deliberately *does* carry values: you asked,
+the library, an explanation *does* carry values: you asked,
 at a terminal, for one path. Over a socket, the same answer is a value
 that has left the process for a reason nobody weighed — so the server
 pushes every explanation through `Explanation::redacted()`, on every
@@ -172,7 +172,7 @@ belong to whoever owns the reload cadence, because a task with a backoff
 and a reconnect policy is not a choice this crate should make on an
 application's behalf.
 
-## Metrics, and why they need a credential
+## Metrics, and the credential they need
 
 `GET /metrics` is the library's [telemetry](https://dynamic-config-rs.github.io/telemetry.html) rendering of
 the same `ConfigStatus` that `/status` returns — one set of numbers, two
@@ -235,7 +235,7 @@ true — it has stopped being the *only* thing that is. A deployment with
 a terminator in front installs the same binary it always did and links
 no TLS at all; a deployment that needs its own socket encrypted, or that
 wants a client certificate, turns on a feature. The
-[threat model](config-server/threat-model.md#tls-and-why-it-is-opt-in)
+[threat model](config-server/threat-model.md#tls)
 carries the full reasoning, including what TLS here does *not* protect.
 
 Only the serving line changes. The router, the sections, the tokens and
@@ -291,7 +291,7 @@ Two rules, both enforced rather than advised:
   `0644` by default, so this is a `defaultMode: 0400` away — which is
   what the message says.
 - **No diagnostic ever carries a byte of it.** The errors that would
-  have — a PEM that will not parse — drop their source deliberately and
+  have — a PEM that will not parse — drop their source and
   report a path and a sentence instead.
 
 ### Running the whole thing
@@ -392,7 +392,7 @@ by restarting.
 
 ## When a source goes bad
 
-The previous document keeps serving — that is the point of fronting a
+The previous document keeps serving, which is what fronting a
 store — and the server says so where a pipeline will see it:
 `consecutive_failures` moves on `/status`, and `/readyz` answers 503.
 Callers see no outage; the deployment sees the problem before the next
@@ -410,7 +410,7 @@ somewhere:
 - **An OpenTelemetry SDK.** An OTLP exporter means four dependency trees
   and a background exporter task in the one program here that holds every
   service's secrets, whose whole posture is a small CVE surface. It is the
-  same trade [TLS](config-server/threat-model.md#tls-and-why-it-is-opt-in)
+  same trade [TLS](config-server/threat-model.md#tls)
   makes and the opposite answer, and the difference is what the
   dependency buys: TLS off the default build is one feature away for the
   deployment that needs it, and an exporter here would buy a deployment

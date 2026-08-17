@@ -35,6 +35,12 @@ deliberately, with an entry under Changed saying so.
 
 ## [Unreleased]
 
+### Changed
+
+- **The book has parts** — *Guide*, *The Stores*, *The Config Server* and
+  *Advanced* — where the eight store chapters had been nested under *Remote
+  Stores* and *Writing a Store* sat among them. No page moved file.
+
 ## [0.6.2] — 2026-08-16
 
 ### Changed

@@ -1,9 +1,9 @@
 # Threat Model
 
 A config server holds **every service's configuration**, which means an
-authentication mistake is every secret at once. This page is where the
-crate's design starts; the [endpoints](../config-server.md) follow from
-it rather than the other way round.
+authentication mistake is every secret at once. The crate's design starts
+here; the [endpoints](../config-server.md) follow from it rather than the
+other way round.
 
 ## Who may read what
 
@@ -72,40 +72,33 @@ and `allow_anonymous = true`. It is then a principal like any other, with
 its own grants — so "open for development" still cannot mean "open to
 everything".
 
-## TLS, and why it is opt-in
+## TLS
 
-This server can terminate TLS, and does not unless it is asked twice: the
+This server can terminate TLS. It does not unless it is asked twice: the
 `tls` Cargo feature, and a `[server.tls]` section. **Neither alone does
-anything**, and a `[server.tls]` section in a build without the feature
-is a refusal rather than a key that is quietly ignored.
+anything**, and a `[server.tls]` section in a build without the feature is
+a refusal rather than a key that is quietly ignored.
 
-This page used to say the opposite — that a second TLS stack doubles the
-CVE surface of a program whose job is holding other people's secrets, and
-that every deployment already has a terminator. The first half is a real
-cost and is why the feature is off by default: a deployment that
-terminates in front keeps exactly the dependency graph it had, and the
-binary it installs contains no TLS code at all. The second half was never
-a fact about deployments, only about the ones that had been looked at.
-Two shapes it was wrong about:
+Terminate in front of it where you can. A deployment that does keeps
+exactly the dependency graph it had, and the binary it installs contains no
+TLS code at all — which is why the feature is off by default.
 
-- **A server on a machine with no ingress.** A VM, a bare-metal host, a
-  developer's cluster. "Put a terminator in front of it" is a second
-  program to run, configure and patch, in front of a program that already
-  links a TLS client for its own stores.
-- **A deployment that wants the config server's own socket to demand a
-  client certificate.** That one cannot be delegated at all: a terminator
-  in front can verify a certificate, but what reaches this process is
-  then a plain HTTP request that says a header, and this server has no
-  way to tell the difference between a terminator's assertion and a
-  caller's claim. If the certificate is to mean anything here, the
-  handshake has to happen here.
+Two deployments cannot delegate it:
 
-The cost, stated rather than implied: with the feature on, this process
-links rustls, `ring` and webpki, and their advisories become this
-server's advisories. What makes that a smaller step than it sounds is
-that all three are already in this workspace's dependency graph — the
-NATS and S3 stores pull them — so the feature adds no crate the lockfile
-did not already have.
+- **A server with no ingress in front.** A VM, a bare-metal host, a
+  developer's cluster. Adding a terminator there is a second program to
+  run, configure and patch, in front of a program that already links a TLS
+  client for its own stores.
+- **A server that must demand a client certificate on its own socket.** A
+  terminator can verify a certificate, but what reaches this process is
+  then a plain HTTP request carrying a header, and this server cannot tell
+  a terminator's assertion from a caller's claim. For the certificate to
+  mean anything here, the handshake has to happen here.
+
+With the feature on, this process links rustls, `ring` and webpki, and
+their advisories become this server's advisories. All three are already in
+this workspace's dependency graph — the NATS and S3 stores pull them — so
+the feature adds no crate the lockfile did not already have.
 
 ### What it does and does not protect
 
@@ -132,8 +125,8 @@ valid until it expires. A `tls.crl` key is a **startup refusal** rather
 than a file this server reads, because the alternative is a check that
 reports itself as happening and is not.
 
-That is a decision rather than an omission, and both halves of it were
-measured against rustls rather than read off its documentation:
+Both halves of that were measured against rustls rather than read off its
+documentation:
 
 - **A stale CRL is used silently by default.** rustls's default
   `ExpirationPolicy` is `Ignore`, so a list whose `nextUpdate` passed in
@@ -237,11 +230,11 @@ section nobody serves.
 
 ### The private key
 
-It is the sharpest secret in this repository's surface — the one file
+It is the sharpest secret this crate handles — the one file
 whose bytes have no legitimate destination at all. So:
 
 - **No diagnostic carries them.** The two errors that would have — a PEM
-  that will not parse — deliberately drop their source, because the one
+  that will not parse — drop their source, because the one
   useful field of a parse error is the input it choked on. What a refusal
   carries is a path, a configuration key and a sentence.
 - **A key file that anything but its owner can read is a startup
@@ -253,7 +246,7 @@ whose bytes have no legitimate destination at all. So:
   to answer handshakes, and no attempt is made to pretend otherwise. A
   process that can be made to dump core was already every secret it
   serves; the key is not a new class of exposure, and a zeroizing
-  allocator here would be theatre rather than a boundary.
+  allocator here would not be a boundary.
 
 `dynamic-config-server/tests/security.rs` is the enforcement, planting a
 real key and asserting its bytes reach no error, no `Debug` and no log

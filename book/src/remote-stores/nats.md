@@ -32,7 +32,7 @@ reads both and merges them in call order — later wins. The KV API has no
 batch read, so that is **one get per key and is not atomic**, and one
 unreadable key fails the whole fetch.
 
-There is deliberately **no prefix form**, and this one is the client's doing
+There is **no prefix form**, and this one is the client's doing
 rather than a preference: `Store::keys()` is the only listing `async-nats`
 exposes and it walks the whole bucket, with the filtered constructor kept
 private. A prefix would therefore be a full-bucket scan wearing a prefix's
@@ -59,7 +59,7 @@ negotiating plaintext. [TLS, and the one vocabulary all eight speak](../remote-s
 
 **Reconnecting is the client's job, and it does it:** `async-nats`
 reconnects indefinitely and re-establishes subscriptions, so this crate
-deliberately adds no retry layer on top. Two consequences: a `fetch`
+adds no retry layer on top. Two consequences: a `fetch`
 during a disconnect fails rather than hanging, and a `watch` survives a
 reconnect silently — which is why the watch *ending at all* is an error.
 

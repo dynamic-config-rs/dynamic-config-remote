@@ -35,7 +35,7 @@ transaction each document is read at its own time, and none is opened,
 because an open read-only transaction is state on the service a
 configuration read would have to remember to release.
 
-There is deliberately **no collection form**, and `documents.list` is not
+There is **no collection form**, and `documents.list` is not
 what is missing. [The reason in
 full](../remote-stores.md#two-stores-hold-fields-not-documents).
 
