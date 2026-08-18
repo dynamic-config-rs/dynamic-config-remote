@@ -35,6 +35,8 @@ deliberately, with an entry under Changed saying so.
 
 ## [Unreleased]
 
+## [0.7.0] — 2026-08-18
+
 ### Added
 
 - **The config server, served and consumed.** `examples/compose/` runs
@@ -75,5 +77,6 @@ deliberately, with an entry under Changed saying so.
   crates are now their own book, at
   [dynamic-config-rs.github.io/remote/](https://dynamic-config-rs.github.io/remote/).
 
-[Unreleased]: https://github.com/dynamic-config-rs/dynamic-config-remote/compare/v0.6.2...HEAD
+[Unreleased]: https://github.com/dynamic-config-rs/dynamic-config-remote/compare/v0.7.0...HEAD
+[0.7.0]: https://github.com/dynamic-config-rs/dynamic-config-remote/compare/v0.6.2...v0.7.0
 [0.6.2]: https://github.com/dynamic-config-rs/dynamic-config-remote/compare/v0.6.1...v0.6.2
