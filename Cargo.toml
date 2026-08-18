@@ -52,7 +52,7 @@ exclude = [
 # The engine, from crates.io. Caret: a store crate is something a user
 # chooses *alongside* the engine, and an exact pin there would turn an
 # engine upgrade into a wall.
-dynamic-config = { version = "0.6", default-features = false }
+dynamic-config = { version = "0.7", default-features = false }
 # These crates' shared internals — credentials, TLS, retry, redaction.
 # Published because cargo will not let a published crate depend on one
 # that is not; exact, because it moves with them in one release.
