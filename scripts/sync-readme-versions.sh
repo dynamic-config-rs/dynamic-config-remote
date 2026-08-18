@@ -39,7 +39,7 @@ pattern = re.compile(
 # README dropping out of the sync a loud failure instead of a shrug. A new
 # crate joins the count, or the release fails saying so. Binaries are
 # exempt by design: a binary is installed, not depended on.
-expected = 10
+expected=10
 
 matched = 0
 # `dynamic-config*` rather than `dynamic-config-*`: the engine crate's

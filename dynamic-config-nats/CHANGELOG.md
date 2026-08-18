@@ -25,6 +25,8 @@ bumps the patch. A change to the minimum supported Rust version is breaking.
 
 ## [Unreleased]
 
+## [0.7.0] — 2026-08-18
+
 ## [0.6.2] — 2026-08-16
 
 ## [0.6.1] — 2026-08-14
@@ -188,7 +190,8 @@ Initial release.
 - Credentials through `async-nats`'s own `ConnectOptions` (re-exported), and
   `from_client` for a connection the program already has.
 
-[Unreleased]: https://github.com/dynamic-config-rs/dynamic-config-remote/compare/v0.6.2...HEAD
+[Unreleased]: https://github.com/dynamic-config-rs/dynamic-config-remote/compare/v0.7.0...HEAD
+[0.7.0]: https://github.com/dynamic-config-rs/dynamic-config-remote/compare/v0.6.2...v0.7.0
 [0.6.2]: https://github.com/dynamic-config-rs/dynamic-config-remote/compare/v0.6.1...v0.6.2
 [0.6.1]: https://github.com/ctolon/dynamic-config/compare/v0.6.0...v0.6.1
 [0.6.0]: https://github.com/ctolon/dynamic-config/compare/v0.5.0...v0.6.0

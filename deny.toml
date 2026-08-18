@@ -12,6 +12,13 @@ ignore = [
     # one example, so it is in no build a user of this crate produces. Revisit
     # if it ever becomes a vulnerability, or if actix drops it.
     { id = "RUSTSEC-2024-0436", reason = "unmaintained, not vulnerable; dev-only, via actix-web in an example" },
+    # `time`'s fix is 0.3.47, whose MSRV is 1.88; this workspace's floor is
+    # 1.71 and the resolver's incompatible-rust-versions fallback holds the
+    # tree at 0.3.41. The vulnerable path parses *untrusted format
+    # descriptions*; here `time` deserialises fixed, well-formed timestamp
+    # formats inside the AWS and NATS SDKs. Expires when the floor rises
+    # past 1.88 or the SDKs drop `time`.
+    { id = "RUSTSEC-2026-0009", reason = "fix needs Rust 1.88, above the 1.71 floor; SDK-internal fixed-format parsing only" },
     # `bincode 1.x` and `proc-macro-error2` are unmaintained rather than
     # vulnerable — informational advisories again. Both arrive through
     # `iai-callgrind`, the instruction-count harness, which is a
