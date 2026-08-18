@@ -223,3 +223,8 @@ required-features = ["tls"]
 [package.metadata.docs.rs]
 all-features = true
 rustdoc-args = ["--cfg", "docsrs"]
+
+[[example]]
+name = "served"
+path = "examples/served.rs"
+required-features = ["client"]

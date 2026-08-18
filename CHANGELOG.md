@@ -35,6 +35,22 @@ deliberately, with an entry under Changed saying so.
 
 ## [Unreleased]
 
+### Added
+
+- **The config server, served and consumed.** `examples/compose/` runs
+  the server in a container from a real `[server]` configuration, and
+  `dynamic-config-server`'s `served` example (behind the `client`
+  feature) is the first thing to drive the crate's own `ConfigServer`
+  client end to end — the pairing the book's chapter now opens with.
+
+### Changed
+
+- **The config-server chapter opens with running it.** The threat model
+  is still the design's source, and still required reading before
+  production — it is no longer the doorway to trying the server out.
+- **The book opens with a Quick Start**: one store, a file base, and a
+  change in the cluster reaching a running process.
+
 ### Changed
 
 - **The book has parts** — *Guide*, *The Stores*, *The Config Server* and

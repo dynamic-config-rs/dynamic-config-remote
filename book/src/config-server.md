@@ -12,11 +12,21 @@ transfer is worth more than a new scheme. What else this project owes to
 other people's work is in
 [CREDITS.md](https://github.com/dynamic-config-rs/dynamic-config-remote/blob/main/CREDITS.md).
 
+Run it first; the security reading can come second:
+
+```sh
+cargo install dynamic-config-server
+dynamic-config-server --config server.toml   # applications, credentials, sources
+
+curl -H "authorization: Bearer $TOKEN" http://localhost:8155/billing/prod
+```
+
 Everything else in this workspace hands configuration to the process that
 called it. This crate hands it **over a socket**, which makes it a
-security boundary rather than a convenience — so the design starts at
-[the threat model](config-server/threat-model.md), and the rest of this
-page follows from it.
+security boundary rather than a convenience. The design decisions on this
+page each trace back to [the threat model](config-server/threat-model.md)
+— an appendix-length document worth reading before production, and
+not a prerequisite for trying the server out.
 
 It is a *user* of the library, not a second implementation of it. Each
 served section is a `Dynamic<Document>`: the same loader, the same file

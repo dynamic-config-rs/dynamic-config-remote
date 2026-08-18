@@ -4,6 +4,7 @@
 
 # Guide
 
+- [Quick Start](quick-start.md)
 - [Remote Stores](remote-stores.md)
   - [Store Crates at a Glance](remote-stores/store-crates.md)
 

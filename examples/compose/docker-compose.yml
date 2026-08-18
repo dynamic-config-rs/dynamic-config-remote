@@ -1,0 +1,15 @@
+# The config server as a container: build from the workspace, mount a
+# server config and one application's documents. The org publishes a
+# prebuilt image from release.yml; this builds from source so the example
+# works on a checkout with no registry access.
+services:
+  server:
+    build:
+      context: ../..
+      dockerfile: examples/compose/Dockerfile
+    ports:
+      - "8155:8155"
+    volumes:
+      - ./server.toml:/etc/config-server/server.toml:ro
+      - ./documents:/etc/config-server/documents
+    command: ["--config", "/etc/config-server/server.toml"]

@@ -1,0 +1,17 @@
+# The server's own configuration, under its [server] section — the real
+# schema, straight from `ServerConfig`. `insecure = true` acknowledges
+# the unencrypted socket this demo speaks; production terminates TLS
+# (the `[server.tls]` block) or sits behind a terminator.
+[server]
+bind = "0.0.0.0:8155"
+insecure = true
+
+[[server.sections]]
+application = "billing"
+profile = "prod"
+files = ["/etc/config-server/documents/billing.toml"]
+
+[[server.clients]]
+name = "billing-pod"
+token = "dev-token-not-for-production-32ch"
+applications = ["billing"]
