@@ -103,10 +103,14 @@ jobs:
           # This action reads no configuration file of its own, so the
           # decision is repeated here rather than left to disagree with the
           # scanner's.
-          # GHSA-r6v5-fh4h-64xc is `time` below 0.3.47, whose fix needs
-          # Rust 1.88 — above this workspace's 1.71 floor; answered at
-          # length in deny.toml and osv-scanner.toml.
-          allow-ghsas: GHSA-rhfx-m35p-ff5j, GHSA-r6v5-fh4h-64xc
+          # Four 1.88-floored fixes above this workspace's 1.71 resolver
+          # floor, each answered at length in osv-scanner.toml (and in
+          # deny.toml where RustSec carries it): `time` below 0.3.47
+          # (GHSA-r6v5-fh4h-64xc), `serde_with` below 3.13 — dev-only via
+          # testcontainers (GHSA-7gcf-g7xr-8hxj), and `aws-sdk-s3` below
+          # 1.112 — a low-severity defense-in-depth hardening of a value
+          # the application itself supplies (GHSA-g59m-gf8j-gjf5).
+          allow-ghsas: GHSA-rhfx-m35p-ff5j, GHSA-r6v5-fh4h-64xc, GHSA-7gcf-g7xr-8hxj, GHSA-g59m-gf8j-gjf5
 
   # The one status branch protection requires from this workflow — same
   # reasoning as CI's gate. `supply-chain` IS in the needs even though it only
