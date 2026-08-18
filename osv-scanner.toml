@@ -41,3 +41,18 @@ use-after-free needs a user-supplied `Drop`/`Hash` that panics inside an
 `LruCache` operation; the SDK stores plain credential structs, so no panic
 can be raised from inside one.
 """
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2026-0009"
+reason = """
+time 0.3.41, inside the AWS and NATS SDKs. The fix (0.3.47) requires Rust
+1.88; this workspace's floor is 1.71 and the resolver's
+incompatible-rust-versions fallback holds the tree below it. The vulnerable
+path parses untrusted format descriptions; the SDKs deserialise fixed,
+well-formed timestamp formats only. Expires when the floor rises past 1.88
+or the SDKs drop `time`.
+"""
+
+[[IgnoredVulns]]
+id = "GHSA-r6v5-fh4h-64xc"
+reason = "The GitHub alias of RUSTSEC-2026-0009, same package and same reasoning."
