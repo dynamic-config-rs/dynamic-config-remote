@@ -253,9 +253,62 @@ impl Server {
             }
         }
 
+        #[allow(unused_mut)]
+        let mut authenticator = Authenticator::new(clients, anonymous);
+
+        #[cfg(feature = "kubernetes-auth")]
+        if let Some(kubernetes) = &config.kubernetes {
+            if kubernetes.grants.is_empty() {
+                return Err(StartupError::Refused(Refusal::KubernetesAuth {
+                    reason: "no grants: an auth mode that admits nobody is a \
+                             typo, not a policy"
+                        .to_owned(),
+                }));
+            }
+
+            let mut grants = Vec::new();
+
+            for grant in &kubernetes.grants {
+                let Some((namespace, account)) = grant.service_account.split_once(':') else {
+                    return Err(StartupError::Refused(Refusal::KubernetesAuth {
+                        reason: format!(
+                            "service_account {:?} — the form is \
+                             <namespace>:<serviceaccount>",
+                            grant.service_account
+                        ),
+                    }));
+                };
+
+                if namespace.is_empty() || account.is_empty() {
+                    return Err(StartupError::Refused(Refusal::KubernetesAuth {
+                        reason: format!(
+                            "service_account {:?} names an empty half",
+                            grant.service_account
+                        ),
+                    }));
+                }
+
+                grants.push((
+                    grant.service_account.clone(),
+                    Principal::new(
+                        format!("k8s:{}", grant.service_account),
+                        grant.applications.clone(),
+                    ),
+                ));
+            }
+
+            let verifier = crate::kubernetes::KubernetesVerifier::in_cluster(
+                kubernetes.audience.clone(),
+                grants,
+            )
+            .map_err(|reason| StartupError::Refused(Refusal::KubernetesAuth { reason }))?;
+
+            authenticator = authenticator.with_kubernetes(verifier);
+        }
+
         Ok(Self {
             sections,
-            authenticator: Authenticator::new(clients, anonymous),
+            authenticator,
             audit: Arc::new(audit),
             address,
             #[cfg(feature = "tls")]

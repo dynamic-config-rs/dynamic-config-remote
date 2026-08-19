@@ -70,6 +70,13 @@ pub enum Refusal {
         /// The address.
         bind: String,
     },
+    /// `[kubernetes]` was present but unusable — an empty grant list, a
+    /// malformed `service_account`, or an environment that is not a
+    /// cluster. The reason names the fix; it never carries a token.
+    KubernetesAuth {
+        /// What was wrong, exactly.
+        reason: String,
+    },
     /// `bind` is not a literal `address:port`.
     UnparsableBind {
         /// What was written.
@@ -136,6 +143,9 @@ impl fmt::Display for Refusal {
                 "client `{client}` has no `token`, which makes it the anonymous caller; set \
                  `allow_anonymous = true` to say that is intended, or give it a token"
             ),
+            Self::KubernetesAuth { reason } => {
+                write!(f, "[kubernetes] auth refused: {reason}")
+            }
             Self::SeveralAnonymousClients => f.write_str(
                 "more than one client has no `token`; there is one anonymous caller, so it \
                  can have only one set of grants",

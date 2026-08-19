@@ -35,6 +35,31 @@ deliberately, with an entry under Changed saying so.
 
 ## [Unreleased]
 
+## [0.8.0] — 2026-08-19
+
+### Changed
+
+- **The engine floor is 0.8** — and that bump is why THIS wave is
+  0.8.0 too: every store implements the engine's `RemoteSource`, so
+  the engine's breaking release (a `LoadSpec` field, the MSRV) is
+  breaking here by composition. Nothing in these crates' own surface
+  changed shape.
+
+### Added
+
+- **`dynamic-config-server`: Kubernetes authentication** (the
+  `kubernetes-auth` feature, default-on for the binary). A caller
+  presents its projected service-account token; the server asks the
+  API server whose it is (TokenReview) and `[[kubernetes.grants]]`
+  maps `namespace:serviceaccount` to applications — no client tokens
+  minted, distributed or rotated at all. Verdicts cached 60s by keyed
+  hash (the token is never stored); static `[[clients]]` checked
+  first; refuses to start outside a cluster, naming what is missing.
+- **`ConfigServer::with_token_file`** — the bearer read from a file,
+  re-read at every fetch, for credentials something else rotates
+  underneath the client: first among them the projected token above.
+  Wins over `with_token` when both are set.
+
 ## [0.7.0] — 2026-08-18
 
 ### Added
@@ -77,6 +102,7 @@ deliberately, with an entry under Changed saying so.
   crates are now their own book, at
   [dynamic-config-rs.github.io/remote/](https://dynamic-config-rs.github.io/remote/).
 
-[Unreleased]: https://github.com/dynamic-config-rs/dynamic-config-remote/compare/v0.7.0...HEAD
+[Unreleased]: https://github.com/dynamic-config-rs/dynamic-config-remote/compare/v0.8.0...HEAD
+[0.8.0]: https://github.com/dynamic-config-rs/dynamic-config-remote/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/dynamic-config-rs/dynamic-config-remote/compare/v0.6.2...v0.7.0
 [0.6.2]: https://github.com/dynamic-config-rs/dynamic-config-remote/compare/v0.6.1...v0.6.2

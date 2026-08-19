@@ -8,7 +8,7 @@ edition.workspace = true
 # that does not carry a web framework. Measured, not declared — `cargo +1.79
 # check -p dynamic-config-server` fails inside axum-core. The library's floor
 # is untouched: nothing depends on this crate.
-rust-version = "1.80"
+rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 homepage.workspace = true
@@ -26,6 +26,9 @@ exclude.workspace = true
 # on that crate directly, so it has no snippet to keep honest.
 
 [dependencies]
+# `kubernetes-auth` only: one blocking POST per unseen token, cached —
+# the same client the vault store trusts, for the same TLS reasons.
+ureq = { version = "3.0.12", default-features = false, features = ["rustls", "json"], optional = true }
 # The engine. `watch` for the file watcher (the server never polls), `tokio`
 # for `off_thread`, so the diagnostic endpoints re-read sources on the
 # blocking pool rather than on a request worker, and `telemetry` for
@@ -139,7 +142,13 @@ bytes = { version = "1.11.1", optional = true }
 rustls-native-certs = { version = "0.8.1", optional = true }
 
 [features]
-default = []
+default = ["kubernetes-auth"]
+# TokenReview-backed caller authentication: a pod presents its projected
+# service-account token as the bearer, the API server vouches, grants
+# map `namespace:serviceaccount` to applications. Default-on for the
+# server binary; a client-only consumer turns default features off and
+# never pulls the HTTP client this needs.
+kubernetes-auth = ["dep:ureq"]
 # TLS termination and mutual TLS. See `book/src/config-server.md`.
 tls = [
     "dep:rustls",
@@ -183,6 +192,8 @@ http-body-util = "0.1.2"
 # git store in the same graph as everything else. `-Z direct-minimal-versions`
 # pins a bare `3` to 3.0.0, which nothing in that union can build against.
 tempfile = "3.26"
+# The TokenReview mock: a real HTTP listener three lines long.
+tiny_http = "0.12"
 tokio = { version = "1.47", features = [
     "rt-multi-thread",
     "macros",

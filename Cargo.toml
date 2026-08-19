@@ -26,13 +26,13 @@ members = [
 ]
 
 [workspace.package]
-version = "0.7.0"
+version = "0.8.0"
 edition = "2021"
 # The floor `dynamic-config-store-core` actually has — it holds nothing but
 # `std`, so it must never be the thing that raises one of its dependents'
 # floors. Every other crate here declares its own, higher, because a
 # companion pays for what it pulls in.
-rust-version = "1.71"
+rust-version = "1.88"
 license = "MIT"
 repository = "https://github.com/dynamic-config-rs/dynamic-config-remote"
 homepage = "https://github.com/dynamic-config-rs/dynamic-config-remote"
@@ -52,11 +52,11 @@ exclude = [
 # The engine, from crates.io. Caret: a store crate is something a user
 # chooses *alongside* the engine, and an exact pin there would turn an
 # engine upgrade into a wall.
-dynamic-config = { version = "0.7", default-features = false }
+dynamic-config = { version = "0.8", default-features = false }
 # These crates' shared internals — credentials, TLS, retry, redaction.
 # Published because cargo will not let a published crate depend on one
 # that is not; exact, because it moves with them in one release.
-dynamic-config-store-core = { version = "=0.7.0", path = "dynamic-config-store-core" }
+dynamic-config-store-core = { version = "=0.8.0", path = "dynamic-config-store-core" }
 
 # One profile for the benchmarks to be worth reading.
 [profile.bench]
