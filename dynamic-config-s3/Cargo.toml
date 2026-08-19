@@ -4,10 +4,9 @@ description = "Read dynamic-config configuration from an S3 object, on AWS or an
 readme = "README.md"
 version.workspace = true
 edition.workspace = true
-# Higher than the core crate's 1.71: `aws-sdk-sts` requires 1.88, measured against the
-# real toolchain rather than taken from a manifest. A companion pays for
-# what it pulls in.
-rust-version = "1.88"
+# The workspace's one 1.88 floor — which this crate's `aws-sdk-sts`
+# graph is the original reason for, measured against the real toolchain.
+rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 homepage.workspace = true

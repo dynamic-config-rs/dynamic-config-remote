@@ -7,8 +7,6 @@ name: Security
 # No push trigger for `dev` — same reasoning as ci.yml: dev travels through
 # pull requests, and a push twin under required checks poisons the gate.
 on:
-  push:
-    branches: [main]
   pull_request:
   schedule:
     - cron: "17 6 * * 1"
@@ -23,103 +21,53 @@ permissions:
   contents: read
 
 jobs:
-  deny:
-    name: advisories, licences, sources
+  policy:
+    name: the security policy names the current line
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 5
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-      - uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2
-        with:
-          # The full `check` — advisories, licences, sources *and* bans — so a
-          # duplicate-dependency policy in deny.toml is enforced somewhere
-          # rather than assumed to be enforced somewhere else.
-          command: check
-
-  unsafe:
-    name: no unsafe code
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-      - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # master
-        with:
-          toolchain: stable
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
-      # Every crate here declares `#![forbid(unsafe_code)]`, which the compiler
-      # enforces. This proves the declaration is still there rather than
-      # trusting that nobody removed it in a hurry.
+      # The stale-table drift this org has already lived through once:
+      # SECURITY.md said 0.0.x while the workspace shipped 0.7. The table's
+      # top row must name the line that is actually published.
       - run: |
-          for crate in dynamic-config-store-core dynamic-config-etcd \
-                       dynamic-config-consul dynamic-config-nats \
-                       dynamic-config-vault dynamic-config-redis \
-                       dynamic-config-s3 dynamic-config-firestore \
-                       dynamic-config-git; do
-            if ! grep -q '#!\[forbid(unsafe_code)\]' "$crate/src/lib.rs"; then
-              echo "::error file=$crate/src/lib.rs::missing #![forbid(unsafe_code)]"
-              exit 1
-            fi
-          done
-          # The server is a binary: its root is main.rs, so it gets its own
-          # line rather than a silent exemption from the loop above.
-          if ! grep -q '#!\[forbid(unsafe_code)\]' dynamic-config-server/src/main.rs; then
-            echo "::error file=dynamic-config-server/src/main.rs::missing #![forbid(unsafe_code)]"
+          version=$(grep -m1 '^version = ' Cargo.toml | cut -d'"' -f2)
+          line="${version%.*}.x"
+          if ! grep -qF "| ${line}" SECURITY.md; then
+            echo "::error file=SECURITY.md::the supported-versions table does not name ${line} (workspace is ${version})"
             exit 1
           fi
-          # Tests and examples are separate crates, so the lib's `forbid`
-          # does not reach them.
-          stray=$(grep -rn 'unsafe' --include='*.rs' \
-              dynamic-config-*/tests dynamic-config-*/examples 2>/dev/null \
-            | grep -v '// ' || true)
-          if [ -n "$stray" ]; then
-            echo "::error::unsafe outside the crates that forbid it: $stray"
-            exit 1
-          fi
-  supply-chain:
-    name: dependency review
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    if: github.event_name == 'pull_request'
+          echo "SECURITY.md names ${line} — current"
+
+  # deny, the unsafe sweep and dependency review are the org's shared
+  # definition — the 75%-identical file every Rust repo carried, defined
+  # once. This repository is the migration pilot; `@main` becomes `@v1`
+  # when the .github repository is first tagged.
+  shared:
+    # The caller's grant must COVER every permission a called job asks
+    # for — the callee's dependency review comments on pull requests,
+    # and a callee cannot exceed what this block hands it. Leaving it
+    # off inherits the workflow's bare `contents: read` and fails the
+    # whole call at startup.
     permissions:
       contents: read
       pull-requests: write
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-      # Flags a pull request that adds a dependency with a known advisory or a
-      # licence outside the allow-list, at the point where changing course is
-      # still cheap.
-      - uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294 # v5
-        with:
-          fail-on-severity: low
-          comment-summary-in-pr: on-failure
-          # The one advisory this repository has already answered, and the
-          # answer is in `osv-scanner.toml` at length: `lru 0.12.5` reaches
-          # the graph through `aws-sdk-s3`'s identity cache, which pins
-          # `^0.12.2` — the fix is 0.16.3 and no version of this workspace
-          # can reach it until the SDK moves. Neither vulnerable path
-          # occurs in the SDK's usage: it caches credentials by key and
-          # never iterates mutably.
-          #
-          # This action reads no configuration file of its own, so the
-          # decision is repeated here rather than left to disagree with the
-          # scanner's.
-          # Four 1.88-floored fixes above this workspace's 1.71 resolver
-          # floor, each answered at length in osv-scanner.toml (and in
-          # deny.toml where RustSec carries it): `time` below 0.3.47
-          # (GHSA-r6v5-fh4h-64xc), `serde_with` below 3.13 — dev-only via
-          # testcontainers (GHSA-7gcf-g7xr-8hxj), and `aws-sdk-s3` below
-          # 1.112 — a low-severity defense-in-depth hardening of a value
-          # the application itself supplies (GHSA-g59m-gf8j-gjf5).
-          allow-ghsas: GHSA-rhfx-m35p-ff5j, GHSA-r6v5-fh4h-64xc, GHSA-7gcf-g7xr-8hxj, GHSA-g59m-gf8j-gjf5
+    uses: dynamic-config-rs/.github/.github/workflows/reusable-security-rust.yml@main
+    with:
+      crates: >-
+        dynamic-config-store-core dynamic-config-etcd dynamic-config-consul
+        dynamic-config-nats dynamic-config-vault dynamic-config-redis
+        dynamic-config-s3 dynamic-config-firestore dynamic-config-git
+      bins: dynamic-config-server
 
   # The one status branch protection requires from this workflow — same
-  # reasoning as CI's gate. `supply-chain` IS in the needs even though it only
-  # exists on pull requests: the gate's own check tolerates `skipped`, so a
-  # plain push passes, while a PR with a failing dependency review is blocked
-  # — which is the whole point of running it.
+  # reasoning as CI's gate. The dependency review inside `shared` only
+  # exists on pull requests; a skipped inner job does not fail the
+  # called workflow, so a plain push passes while a PR with a failing
+  # review is blocked — which is the whole point of running it.
   security-ok:
     name: Security is green
-    needs: [deny, unsafe, supply-chain]
+    needs: [policy, shared]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 5

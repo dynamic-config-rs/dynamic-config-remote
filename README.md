@@ -4,8 +4,8 @@
 
 **The eight remote stores for [dynamic-config](https://github.com/dynamic-config-rs/dynamic-config), and the server that serves what they fetch.**
 
-[![CI](https://github.com/dynamic-config-rs/dynamic-config-remote/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/dynamic-config-rs/dynamic-config-remote/actions/workflows/ci.yml)
-[![Security](https://github.com/dynamic-config-rs/dynamic-config-remote/actions/workflows/security.yml/badge.svg?branch=main)](https://github.com/dynamic-config-rs/dynamic-config-remote/actions/workflows/security.yml)
+[![CI](https://github.com/dynamic-config-rs/dynamic-config-remote/actions/workflows/ci.yml/badge.svg?event=pull_request)](https://github.com/dynamic-config-rs/dynamic-config-remote/actions/workflows/ci.yml)
+[![Security](https://github.com/dynamic-config-rs/dynamic-config-remote/actions/workflows/security.yml/badge.svg?event=pull_request)](https://github.com/dynamic-config-rs/dynamic-config-remote/actions/workflows/security.yml)
 [![crates.io](https://img.shields.io/crates/v/dynamic-config-etcd.svg?label=dynamic-config-etcd)](https://crates.io/crates/dynamic-config-etcd)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
@@ -79,12 +79,11 @@ picked up deliberately. The engine, the macro and the loader are
 
 ## MSRV
 
-| | floor |
-|---|---|
-| `dynamic-config-store-core` | **1.71** |
-| etcd, Consul, Vault, Firestore, git | 1.85 |
-| NATS, Redis, S3 | 1.88 (their clients) |
-| `dynamic-config-server` | 1.80 (axum) |
+**Rust 1.88 — one floor, every crate**, since the org-wide raise. Older
+toolchains resolve the last pre-raise releases through cargo's
+MSRV-aware fallback and are end-of-life; the
+[Compatibility Contract](https://dynamic-config-rs.github.io/compatibility.html)
+carries the policy.
 
 MSRV changes are breaking, and every floor has a CI row against a real
 toolchain rather than a number somebody remembered.
@@ -93,6 +92,8 @@ toolchain rather than a number somebody remembered.
 
 [CONTRIBUTING.md](CONTRIBUTING.md). `just check` is the gate without
 Docker; `just containers` and `just chaos` are the ones with it.
+
+What you may build on and find unchanged tomorrow is written down: the [Compatibility Contract](https://dynamic-config-rs.github.io/compatibility.html).
 
 ## License
 

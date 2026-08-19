@@ -246,6 +246,38 @@ pub struct ServerConfig {
     pub sections: Vec<SectionConfig>,
     /// The callers.
     pub clients: Vec<ClientConfig>,
+    /// TokenReview-backed callers: pods presenting their projected
+    /// service-account tokens. `kubernetes-auth` feature; in-cluster only.
+    #[serde(default)]
+    pub kubernetes: Option<KubernetesAuthConfig>,
+}
+
+/// ```toml
+/// [kubernetes]
+/// audience = "dynamic-config-server"   # optional; pins the token audience
+///
+/// [[kubernetes.grants]]
+/// service_account = "shop:billing"     # <namespace>:<serviceaccount>
+/// applications = ["shop"]
+/// ```
+#[derive(Debug, Clone, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct KubernetesAuthConfig {
+    /// The audience the projected token must carry, when pinned.
+    #[serde(default)]
+    pub audience: Option<String>,
+    /// Which service accounts become which principals.
+    pub grants: Vec<KubernetesGrant>,
+}
+
+#[derive(Debug, Clone, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct KubernetesGrant {
+    /// `<namespace>:<serviceaccount>` — exactly the suffix of the
+    /// username TokenReview answers with.
+    pub service_account: String,
+    /// The applications this identity may read. Exact, no wildcards.
+    pub applications: Vec<String>,
 }
 
 impl Default for ServerConfig {
@@ -259,6 +291,7 @@ impl Default for ServerConfig {
             max_stream_connections: default_max_streams(),
             sections: Vec::new(),
             clients: Vec::new(),
+            kubernetes: None,
         }
     }
 }

@@ -347,6 +347,9 @@ pub mod auth;
 pub mod client;
 mod config;
 mod document;
+#[cfg(feature = "kubernetes-auth")]
+#[cfg_attr(docsrs, doc(cfg(feature = "kubernetes-auth")))]
+pub mod kubernetes;
 mod routes;
 #[cfg(feature = "tls")]
 mod serve;

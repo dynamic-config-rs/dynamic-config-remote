@@ -1,70 +1,12 @@
 [graph]
 all-features = true
 
-[advisories]
-yanked = "deny"
-# Exceptions are listed one at a time, with a reason, and never as a blanket
-# "ignore dev-dependencies": a vulnerability in something that runs on a
-# contributor's machine or in CI still matters.
-ignore = [
-    # `paste` is unmaintained rather than vulnerable — an informational
-    # advisory. It arrives through `actix-web`, which is a dev-dependency of
-    # one example, so it is in no build a user of this crate produces. Revisit
-    # if it ever becomes a vulnerability, or if actix drops it.
-    { id = "RUSTSEC-2024-0436", reason = "unmaintained, not vulnerable; dev-only, via actix-web in an example" },
-    # `time`'s fix is 0.3.47, whose MSRV is 1.88; this workspace's floor is
-    # 1.71 and the resolver's incompatible-rust-versions fallback holds the
-    # tree at 0.3.41. The vulnerable path parses *untrusted format
-    # descriptions*; here `time` deserialises fixed, well-formed timestamp
-    # formats inside the AWS and NATS SDKs. Expires when the floor rises
-    # past 1.88 or the SDKs drop `time`.
-    { id = "RUSTSEC-2026-0009", reason = "fix needs Rust 1.88, above the 1.71 floor; SDK-internal fixed-format parsing only" },
-    # `bincode 1.x` and `proc-macro-error2` are unmaintained rather than
-    # vulnerable — informational advisories again. Both arrive through
-    # `iai-callgrind`, the instruction-count harness, which is a
-    # dev-dependency of the core crate: `cargo tree -i` shows one path each
-    # and it ends at `benches/instructions.rs`. Nothing a user of this crate
-    # builds contains either. The harness is worth the two entries because
-    # instruction counts are the only performance gate a shared runner can
-    # actually hold; revisit if either advisory becomes a vulnerability, or
-    # when iai-callgrind moves to `bincode 2`. There is a second reason to
-    # keep watching it: cargo already reports `proc-macro-error2` as code a
-    # future Rust will reject (`cargo report future-incompatibilities`), so
-    # this dependency has an expiry date whatever RustSec says about it.
-    { id = "RUSTSEC-2025-0141", reason = "unmaintained, not vulnerable; dev-only, via iai-callgrind in a bench" },
-    { id = "RUSTSEC-2026-0173", reason = "unmaintained, not vulnerable; dev-only, via iai-callgrind-macros in a bench" },
-    # The two `lru` advisories (an aliasing violation in `IterMut`, a
-    # panic-safety use-after-free in `pop()`) are accepted on the GitHub
-    # Dependabot tab with written reasons, not here: RustSec's copies either
-    # do not exist yet (2026-0253) or no longer match lru 0.12 as its
-    # criteria stand (2026-0002), and cargo-deny treats an ignore that
-    # matches nothing as noise at best and a failure at worst. The exposure
-    # itself is upstream-blocked — `aws-sdk-s3` pins `^0.12.2` — and neither
-    # vulnerable code path occurs in the SDK's identity-cache usage. Re-add
-    # entries here if RustSec ships criteria that match.
-]
-# `aws-sdk-s3` is pinned to 1.112.0 or newer (GHSA-g59m-gf8j-gjf5), which
-# regenerating the lockfile undoes: the MSRV-fallback resolver picks 1.96,
-# the newest release compatible with the *lowest* floor in the workspace.
-# The same trap `time` is in, one crate over. After any `cargo
-# generate-lockfile`, re-apply:
-#
-#   cargo update -p aws-sdk-s3 --precise 1.112.0
-#
-# `quinn-proto` (0.11.15) and `serde_with` (3.21.0) are pinned for the same
-# reason and by the same command. Both arrive through dev-dependencies —
-# testcontainers — so they never reach a published artefact, but a scan
-# that is red for a week is a scan nobody reads.
-#
-#   cargo update -p quinn-proto --precise 0.11.15
-#   cargo update -p serde_with --precise 3.21.0
-# `time` is pinned in Cargo.lock to 0.3.47 or newer (RUSTSEC-2026-0009), which
-# declares rust-version 1.88. That is fine — it is reached only through the
-# companion crates and dev-dependencies, never through the core crate, whose
-# floor is 1.71. Regenerating the lockfile with
-# `resolver.incompatible-rust-versions = "fallback"` will silently drop it back
-# to 0.3.41 and reintroduce the advisory, so re-apply
-# `cargo update -p time --precise <patched>` afterwards.
+# Since the 1.88 floor, the old pin choreography is gone: the MSRV-aware
+# resolver now lands `time`, `serde_with`, `aws-sdk-s3` and `quinn-proto`
+# on their fixed releases naturally, and a plain `cargo update` keeps
+# them there. This paragraph replaced three re-apply-after-regenerate
+# recipes — if you are reading it because a scan went red, the answer
+# is `cargo update`, not a `--precise` pin.
 
 [licenses]
 # Permissive only. A copyleft dependency would leak into every user of a crate

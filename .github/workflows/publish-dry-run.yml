@@ -6,7 +6,7 @@ name: Publish dry run
 # manifests change, not when the code does.
 on:
   push:
-    branches: [main, dev]
+    branches: [dev]
     paths:
       - "**/Cargo.toml"
       - "**/README.md"

@@ -46,6 +46,51 @@ change.
 | `GET /{application}/{profile}/status` | generation, health, staleness |
 | `GET /{application}/{profile}/stream` | one event per install, carrying a generation |
 | `GET /metrics` | Prometheus text for the sections this caller may read |
+
+## Kubernetes authentication: no client tokens at all
+
+On Kubernetes, minting and distributing bearer tokens per client is
+exactly the secret-handling this organisation keeps designing away —
+so the server can review **the token every pod already has**:
+
+```toml
+[kubernetes]
+audience = "dynamic-config-server"      # optional: pin the token audience
+
+[[kubernetes.grants]]
+service_account = "shop:billing"        # <namespace>:<serviceaccount>
+applications = ["shop"]
+```
+
+A caller presents its projected service-account token as the bearer;
+the server asks the API server (TokenReview) whose it is, and the
+grants map `namespace:serviceaccount` to applications. Verdicts are
+cached for sixty seconds by a keyed hash — the token itself is never
+stored. Static `[[clients]]` tokens keep working beside it, checked
+first; the review is the fallback for bearers no configured token
+matched. Revoking access is deleting the ServiceAccount or the grant —
+nothing to rotate, nothing to leak. The mode is the `kubernetes-auth`
+cargo feature (default-on for the binary) and refuses to start outside
+a cluster, naming what is missing.
+
+The client side is one call, and it re-reads per fetch because
+projected tokens rotate:
+
+```rust,ignore
+ConfigServer::new(url, "shop", "prod")
+    .with_token_file("/var/run/secrets/kubernetes.io/serviceaccount/token")
+```
+
+The [Kubernetes agent](https://dynamic-config-rs.github.io/k8s/config-server.html)
+spells the same thing as one annotation: `dynamic-config.rs/auth: "kubernetes"`.
+
+The read half of this table is small on purpose — small enough to
+**reimplement in any language**: a Go or Java service that answers
+`GET /{application}/{profile}` with the document and honours the bearer
+token IS a store to every consumer in the family — the engine's
+`config-server` source, both bindings, and the Kubernetes agent. That
+is the sanctioned way to put a store the project does not ship (or an
+in-house system) behind a contract everything already speaks.
 | `GET /healthz` | liveness. Unauthenticated |
 | `GET /readyz` | readiness. Unauthenticated |
 
@@ -468,8 +513,7 @@ somewhere:
   the schedule of whoever operates it, not a release cadence of this
   workspace's.
 
-MSRV 1.80 — above the workspace floor of 1.71, because axum 0.8 declares
-1.80 and there is no version of a server that carries no web framework.
-Nothing depends on this crate, so the library's floor is untouched. The
-`tls` feature does not move it either: rustls 0.23 and tokio-rustls 0.26
-both declare 1.71, and `cargo +1.80 check --all-features` passes.
+MSRV 1.88, the organisation's one floor since the 0.7.1 round — the
+per-crate ladder this paragraph used to walk collapsed as security
+work. The `tls` feature does not move it, and
+`cargo +1.88 check --all-features` is a CI row.

@@ -156,6 +156,11 @@ impl Principal {
 pub struct Authenticator {
     clients: Vec<(Token, Principal)>,
     anonymous: Option<Principal>,
+    /// The TokenReview fallback: consulted only when a bearer matched
+    /// no configured token — a projected service-account token is not
+    /// in anyone's config, and that is its whole point.
+    #[cfg(feature = "kubernetes-auth")]
+    kubernetes: Option<crate::kubernetes::KubernetesVerifier>,
 }
 
 impl Authenticator {
@@ -169,7 +174,18 @@ impl Authenticator {
         Self {
             clients: clients.into_iter().collect(),
             anonymous,
+            #[cfg(feature = "kubernetes-auth")]
+            kubernetes: None,
         }
+    }
+
+    /// Adds the TokenReview fallback for bearers no configured token
+    /// matched.
+    #[cfg(feature = "kubernetes-auth")]
+    #[must_use]
+    pub fn with_kubernetes(mut self, verifier: crate::kubernetes::KubernetesVerifier) -> Self {
+        self.kubernetes = Some(verifier);
+        self
     }
 
     /// Whether an unauthenticated caller is somebody here.
@@ -205,6 +221,13 @@ impl Authenticator {
 
             if hit && found.is_none() {
                 found = Some(principal.clone());
+            }
+        }
+
+        #[cfg(feature = "kubernetes-auth")]
+        if found.is_none() {
+            if let Some(kubernetes) = &self.kubernetes {
+                found = kubernetes.verify(presented);
             }
         }
 

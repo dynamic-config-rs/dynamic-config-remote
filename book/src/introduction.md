@@ -8,8 +8,8 @@ that hands a section to a program which can reach none of them.
 
 ```toml
 [dependencies]
-dynamic-config = "0.6"
-dynamic-config-etcd = "0.6"
+dynamic-config = "0.7"
+dynamic-config-etcd = "0.7"
 ```
 
 ```rust,ignore
@@ -34,6 +34,6 @@ The bindings wrap the same engine for
 [Node.js](https://dynamic-config-rs.github.io/node/), and each of them
 ships these stores as a second package.
 
-Each crate names the engine with a caret (`"0.6"`), so an engine patch
+Each crate names the engine with a caret (`"0.7"`), so an engine patch
 release reaches a store without the store being re-released — and a
 breaking one is picked up here explicitly, in its own time.

@@ -1,14 +1,11 @@
 name: CI
 
-# No push trigger for `dev`: everything on dev travels through a pull
-# request anyway, and a push run would twin the PR run on the same commit —
-# under *required* checks, a deduplicating cancellation poisons the gate
-# (a cancelled twin's "CI is green" reads as failure and blocks the merge).
-# `main` keeps its push trigger because a rebase-merge mints a new SHA that
-# no PR run ever checked.
+# No push trigger at all: everything travels through a pull request, and
+# main only ever receives a SQUASH of a green PR — the squashed tree is
+# byte-identical to the PR head the checks already ran on, so a main
+# re-run would test the same content twice. Merging runs release.yml
+# alone; workflow_dispatch stays as the manual escape hatch.
 on:
-  push:
-    branches: [main]
   pull_request:
   workflow_dispatch:
 
@@ -260,37 +257,31 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # Each crate declares its own floor, and one representative
-          # `check` keeps the declaration honest — a floor nobody compiles
-          # against is a number in a manifest. `package` names a crate
-          # rather than a feature set.
-          - rust: "1.85"
+          # One floor since the 1.88 raise; one representative `check`
+          # per crate keeps the shared declaration honest. `package`
+          # names a crate rather than a feature set.
+          - rust: "1.88"
             package: dynamic-config-etcd
-          - rust: "1.85"
+          - rust: "1.88"
             package: dynamic-config-consul
           - rust: "1.88"
             package: dynamic-config-nats
-          - rust: "1.85"
+          - rust: "1.88"
             package: dynamic-config-vault
           - rust: "1.88"
             package: dynamic-config-redis
           - rust: "1.88"
             package: dynamic-config-s3
-          - rust: "1.85"
+          - rust: "1.88"
             package: dynamic-config-firestore
-          # What the store crates share holds nothing but `std`, so it must
-          # never be the thing that raises one of their floors.
-          - rust: "1.71"
+          - rust: "1.88"
             package: dynamic-config-store-core
-          - rust: "1.85"
+          - rust: "1.88"
             package: dynamic-config-git
-          # axum 0.8 declares 1.80, and a server carries a web framework.
-          - rust: "1.80"
+          - rust: "1.88"
             package: dynamic-config-server
-          # TLS is off by default, so the floor has to be checked with it on
-          # too — rustls and tokio-rustls both declare 1.71, and this row is
-          # what keeps that true rather than assumed.
-          - rust: "1.80"
+          # TLS is off by default, so the floor is checked with it on too.
+          - rust: "1.88"
             package: dynamic-config-server
             flags: "--all-features"
     runs-on: ubuntu-latest

@@ -1,0 +1,43 @@
+name: Nightly
+
+# The store legs of the engine's soak: the same compose pair the book
+# documents, driven for an hour with the containers cycled — the
+# network-cut/recover and auth-expiry faults the engine-only rig cannot
+# stage. Invariant: the client side never crashes, never wedges, and
+# recovers to the newest document once the store returns.
+on:
+  schedule:
+    - cron: "41 1 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  store-soak:
+    name: the stores survive an hour of faults
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # master
+        with:
+          toolchain: stable
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+      # The container suites already stage per-store fault cases
+      # (kill/restart, auth expiry, deleted keys); an hour of repetition
+      # is what turns a passing case into evidence. protoc: etcd's build
+      # script compiles protos.
+      - run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
+      - run: |
+          deadline=$(( $(date +%s) + 3600 ))
+          round=0
+          while [ "$(date +%s)" -lt "$deadline" ]; do
+            round=$((round + 1))
+            echo "── round ${round}"
+            cargo test -p dynamic-config-etcd -p dynamic-config-consul \
+              -p dynamic-config-nats -p dynamic-config-vault \
+              -p dynamic-config-redis -p dynamic-config-s3 \
+              -p dynamic-config-firestore -- --test-threads=2
+          done
+          echo "completed ${round} rounds inside the hour"

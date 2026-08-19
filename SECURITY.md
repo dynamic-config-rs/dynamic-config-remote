@@ -24,12 +24,12 @@ the ones it explicitly does not.
 `Debug`; reload diffs, `check()` reports, unknown-key suggestions and *error
 messages* all report paths and types, never values, so nothing routes around the
 redaction. A report of a value appearing in a log or an error message is a
-vulnerability. `dynamic-config/tests/security.rs` asserts each of these, and CI
+vulnerability. the engine repository's [`tests/security.rs`](https://github.com/dynamic-config-rs/dynamic-config) asserts each of these, and its CI
 runs it as a job of its own.
 
 **The parsing surfaces are fuzzed.** The unit parsers, `Value` path lookup and
 the rule that decides whether a path touches a secret run under libFuzzer
-(`fuzz/`, built on every CI run and run on a weekly schedule). A crash or a
+(the engine repository's [`fuzz/`](https://github.com/dynamic-config-rs/dynamic-config), built on every CI run and run on a weekly schedule). A crash or a
 redaction rule that answers differently for the same path is a finding: report
 it through the process above, with the reproducing input attached.
 
@@ -68,12 +68,16 @@ with your privileges.
 
 | Version | Supported |
 |---|---|
-| 0.0.x | ✅ the latest patch |
-| < 0.0.1 | — nothing older exists |
+| 0.8.x | ✅ the latest patch |
+| ≤ 0.7 | — end of life |
 
-Before 1.0, fixes land on the latest published version and nothing is
-backported: there is no version old enough to be worth pinning to. After 1.0,
-the current and previous minor versions.
+Security fixes land on the **latest patch of the line above** and
+nothing is backported before 1.0: when a release ships, every prior
+patch of its line is end-of-life the same day. Older toolchains resolve
+older published versions through cargo's MSRV-aware resolver and are
+explicitly unsupported. After 1.0, the current and previous minor
+lines. The full promise lives in the engine book's
+[Compatibility Contract](https://dynamic-config-rs.github.io/compatibility.html).
 
 ## Threat model, stated plainly
 
@@ -100,7 +104,7 @@ runs on every change:
 
 | Claim | Enforced by |
 |---|---|
-| Secrets stay out of diagnostics | `dynamic-config/tests/security.rs`, run as its own CI job |
+| Secrets stay out of diagnostics | the engine repository's `tests/security.rs`, run as its own CI job there |
 | Files are created private, symlinks refused | `write::permissions` tests, same job |
 | A store cannot panic the process | `checked_add` on every server-supplied duration, plus a hostile-document test |
 | No unsafe code | `#![forbid(unsafe_code)]` in every crate, *and* a CI job that checks the attribute is still there |

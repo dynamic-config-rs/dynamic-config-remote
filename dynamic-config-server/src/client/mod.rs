@@ -68,6 +68,7 @@ pub struct ConfigServer {
     application: String,
     profile: String,
     token: Option<String>,
+    token_file: Option<std::path::PathBuf>,
     tls: TlsConfig,
     timeout: Duration,
     /// Built once from `tls`, on the first fetch: assembling a rustls
@@ -110,6 +111,7 @@ impl ConfigServer {
             application,
             profile,
             token: None,
+            token_file: None,
             tls: TlsConfig::new(),
             timeout: DEFAULT_TIMEOUT,
             client: std::sync::OnceLock::new(),
@@ -124,6 +126,17 @@ impl ConfigServer {
     #[must_use]
     pub fn with_token(mut self, token: impl Into<String>) -> Self {
         self.token = Some(token.into());
+        self
+    }
+
+    /// The bearer token read from a file, **re-read at every fetch** —
+    /// for credentials something else rotates underneath this client,
+    /// first among them a pod's projected service-account token (the
+    /// server's `[kubernetes]` auth reviews exactly that). Wins over
+    /// [`with_token`](Self::with_token) when both are set.
+    #[must_use]
+    pub fn with_token_file(mut self, path: impl Into<std::path::PathBuf>) -> Self {
+        self.token_file = Some(path.into());
         self
     }
 
@@ -249,11 +262,24 @@ impl ConfigServer {
         let mut connection =
             Connection::open(&endpoint, self.tls_client(secure)?, budget, &self.described).await?;
 
+        // The file wins, and is read per fetch: a projected token that
+        // rotated between two fetches must present its NEW self.
+        let fresh = match &self.token_file {
+            None => None,
+            Some(file) => Some(std::fs::read_to_string(file).map_err(|error| {
+                Error::auth(format!(
+                    "{}: reading the bearer token file: {error}",
+                    self.described
+                ))
+            })?),
+        };
+        let bearer = fresh.as_deref().map(str::trim).or(self.token.as_deref());
+
         let response = connection
             .get(
                 &endpoint,
                 &path,
-                self.token.as_deref(),
+                bearer,
                 "application/json",
                 budget,
                 &self.described,
@@ -332,6 +358,7 @@ impl std::fmt::Debug for ConfigServer {
             .field("application", &self.application)
             .field("profile", &self.profile)
             .field("token", &self.token.as_ref().map(|_| "<redacted>"))
+            .field("token_file", &self.token_file)
             .field("tls", &self.tls)
             .field("timeout", &self.timeout)
             .finish()

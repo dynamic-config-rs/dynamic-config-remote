@@ -19,61 +19,12 @@
 # pins the version out of reach.
 
 [[IgnoredVulns]]
-id = "RUSTSEC-2026-0002"
-reason = """
-lru 0.12.5, through aws-sdk-s3's identity cache, which pins ^0.12.2 — the fix
-is 0.16.3 and no version of this workspace can reach it until the SDK moves.
-Neither vulnerable path (IterMut's Stacked Borrows violation) occurs in the
-SDK's usage: it caches credentials by key and never iterates mutably.
-RustSec's own criteria do not match this graph, which is why cargo-deny is
-silent about it and this file is not.
-"""
-
-[[IgnoredVulns]]
-id = "GHSA-rhfx-m35p-ff5j"
-reason = "The GitHub alias of RUSTSEC-2026-0002, same package and same reasoning."
-
-[[IgnoredVulns]]
 id = "RUSTSEC-2026-0253"
 reason = """
-lru 0.12.5 again, upstream-pinned by aws-sdk-s3 as above. The panic-safety
-use-after-free needs a user-supplied `Drop`/`Hash` that panics inside an
-`LruCache` operation; the SDK stores plain credential structs, so no panic
-can be raised from inside one.
+lru 0.16.4, upstream-pinned by aws-sdk-s3 (^0.16; the fix is 0.18.2).
+The panic-safety use-after-free needs a user-supplied Drop/Hash that
+panics inside an LruCache operation; the SDK stores plain credential
+structs, so no panic can be raised from inside one. Expires when the
+SDK moves its pin.
 """
 
-[[IgnoredVulns]]
-id = "RUSTSEC-2026-0009"
-reason = """
-time 0.3.41, inside the AWS and NATS SDKs. The fix (0.3.47) requires Rust
-1.88; this workspace's floor is 1.71 and the resolver's
-incompatible-rust-versions fallback holds the tree below it. The vulnerable
-path parses untrusted format descriptions; the SDKs deserialise fixed,
-well-formed timestamp formats only. Expires when the floor rises past 1.88
-or the SDKs drop `time`.
-"""
-
-[[IgnoredVulns]]
-id = "GHSA-r6v5-fh4h-64xc"
-reason = "The GitHub alias of RUSTSEC-2026-0009, same package and same reasoning."
-
-[[IgnoredVulns]]
-id = "GHSA-7gcf-g7xr-8hxj"
-reason = """
-serde_with 3.12.0, through testcontainers — a dev-dependency of the
-container suites, in no build a user of these crates produces. Every fixed
-release (3.13+) requires Rust 1.88, above the 1.71 floor the resolver
-holds. The panic needs a KeyValueMap serialising an empty entry;
-testcontainers serialises fixed Docker request shapes. Expires when the
-floor rises past 1.88.
-"""
-
-[[IgnoredVulns]]
-id = "GHSA-g59m-gf8j-gjf5"
-reason = """
-aws-sdk-s3 1.96.0. The advisory is a low-severity defense-in-depth
-hardening of the region parameter — a value this crate's user supplies in
-their own configuration, not one an attacker reaches. Every fixed release
-(1.112+) requires Rust 1.88, above the 1.71 floor the resolver holds.
-Expires when the floor rises past 1.88.
-"""

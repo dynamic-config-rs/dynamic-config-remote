@@ -7,7 +7,7 @@ edition.workspace = true
 # `gix` declares 1.85 and means it (edition 2024). The workspace floor stays at
 # 1.71: the core crate owes nobody a git client, and a companion pays for what
 # it pulls in. Measured with `cargo +1.85 check -p dynamic-config-git`.
-rust-version = "1.85"
+rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 homepage.workspace = true

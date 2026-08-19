@@ -57,24 +57,24 @@ docs:
     RUSTDOCFLAGS="-D warnings" cargo doc --workspace --all-features --no-deps
 
 # Every crate's floor still compiles. Needs the toolchains
-# (`rustup toolchain install 1.85 1.88`).
+# (`rustup toolchain install 1.88`).
 msrv:
     #!/usr/bin/env bash
     set -euo pipefail
     cp Cargo.lock Cargo.lock.pinned
     trap 'mv Cargo.lock.pinned Cargo.lock' EXIT
     cargo +stable generate-lockfile
-    cargo +1.71 check -p dynamic-config-store-core --locked
-    cargo +1.85 check -p dynamic-config-etcd --locked
-    cargo +1.85 check -p dynamic-config-consul --locked
+    cargo +1.88 check -p dynamic-config-store-core --locked
+    cargo +1.88 check -p dynamic-config-etcd --locked
+    cargo +1.88 check -p dynamic-config-consul --locked
     cargo +1.88 check -p dynamic-config-nats --locked
-    cargo +1.85 check -p dynamic-config-vault --locked
+    cargo +1.88 check -p dynamic-config-vault --locked
     cargo +1.88 check -p dynamic-config-redis --locked
     cargo +1.88 check -p dynamic-config-s3 --locked
-    cargo +1.85 check -p dynamic-config-firestore --locked
-    cargo +1.85 check -p dynamic-config-git --locked
-    cargo +1.80 check -p dynamic-config-server --locked
-    cargo +1.80 check -p dynamic-config-server --locked --all-features
+    cargo +1.88 check -p dynamic-config-firestore --locked
+    cargo +1.88 check -p dynamic-config-git --locked
+    cargo +1.88 check -p dynamic-config-server --locked
+    cargo +1.88 check -p dynamic-config-server --locked --all-features
 
 # Every example builds, including the one behind `required-features`.
 examples:
