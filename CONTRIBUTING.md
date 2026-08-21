@@ -71,7 +71,8 @@ Changing any of these is fine — arguing for it is the price:
 - **The core crate's MSRV is 1.71**, and every feature that raises it says so in
   the README table. Features that raise it are verified against real toolchains
   in CI, not trusted from a manifest — `age` declares 1.74 and needs 1.85.
-- **No mandatory dependency** beyond `figment`, `serde` and `arc-swap`.
+- **No mandatory dependency** beyond `serde`, `arc-swap` and the engine's
+  default resolution backend.
 
 ## Style
 

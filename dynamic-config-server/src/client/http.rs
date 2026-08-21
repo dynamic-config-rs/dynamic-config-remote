@@ -263,7 +263,20 @@ impl Connection {
             }),
         })
     }
+}
 
+/// What one `GET` is: a path, a credential, what is acceptable back, and
+/// where a stream left off.
+pub(super) struct Get<'a> {
+    pub(super) path: &'a str,
+    pub(super) token: Option<&'a str>,
+    pub(super) accept: &'a str,
+    /// `Last-Event-ID`, for a subscription being resumed. `None` for a
+    /// plain fetch, which has nothing to resume.
+    pub(super) resume: Option<&'a str>,
+}
+
+impl Connection {
     /// One `GET`, with the bearer token if there is one.
     ///
     /// # Errors
@@ -273,12 +286,17 @@ impl Connection {
     pub(super) async fn get(
         &mut self,
         endpoint: &Endpoint,
-        path: &str,
-        token: Option<&str>,
-        accept: &str,
+        request: Get<'_>,
         budget: Budget,
         described: &str,
     ) -> Result<Response<Incoming>, Error> {
+        let Get {
+            path,
+            token,
+            accept,
+            resume,
+        } = request;
+
         let mut request = Request::builder()
             .method("GET")
             .uri(path)
@@ -287,6 +305,13 @@ impl Connection {
 
         if let Some(token) = token {
             request = request.header(AUTHORIZATION, format!("Bearer {token}"));
+        }
+
+        // Where the last stream stopped. The server answers a resumed
+        // subscription with the *current* generation rather than a replay,
+        // so this is a comparison and not a cursor into a buffer.
+        if let Some(last) = resume {
+            request = request.header("last-event-id", last);
         }
 
         // The builder's error is dropped rather than reported, and the token
@@ -392,6 +417,130 @@ where
             "{described}: {what} did not finish within {timeout:?}"
         ))
     })
+}
+
+/// A `text/event-stream`, read one event at a time.
+///
+/// Enough of server-sent events for this one endpoint: `id`, `data`, blank
+/// line ends an event, a line starting `:` is a comment. Not a general SSE
+/// client — there is no `retry`, no multi-line `data` reassembly beyond
+/// joining with newlines, and no `event` type dispatch, because the stream
+/// this reads carries one kind of event and a number.
+///
+/// **Bounded twice.** An event that never ends is refused past
+/// [`MOST_EVENT_BYTES`], and a stream that goes silent is abandoned after
+/// `idle` — the server sends a comment every fifteen seconds precisely so
+/// that silence means something.
+pub(super) struct Events {
+    body: Incoming,
+    buffer: Vec<u8>,
+    finished: bool,
+}
+
+/// The most one event may carry before the stream is refused.
+///
+/// The events this reads are a hundred bytes. The bound is for the server
+/// that is not the server it thinks it is talking to.
+const MOST_EVENT_BYTES: usize = 64 * 1024;
+
+/// One event: what it was called, and what it carried.
+pub(super) struct StreamEvent {
+    pub(super) id: Option<String>,
+    pub(super) data: String,
+}
+
+impl Events {
+    pub(super) fn new(response: Response<Incoming>) -> Self {
+        Self {
+            body: response.into_body(),
+            buffer: Vec::new(),
+            finished: false,
+        }
+    }
+
+    /// The next event, or `None` when the server closed the stream.
+    ///
+    /// # Errors
+    ///
+    /// If the connection fails, an event runs past the bound, or nothing at
+    /// all arrives within `idle`.
+    pub(super) async fn next(
+        &mut self,
+        idle: Duration,
+        described: &str,
+    ) -> Result<Option<StreamEvent>, Error> {
+        loop {
+            if let Some(event) = self.take() {
+                return Ok(Some(event));
+            }
+
+            if self.finished {
+                return Ok(None);
+            }
+
+            let frame = deadline(idle, self.body.frame(), described, "the change stream").await?;
+
+            match frame {
+                None => {
+                    self.finished = true;
+
+                    // Whatever is left without a blank line after it is a
+                    // half-written event, and half an event is not one.
+                    return Ok(None);
+                }
+                Some(Err(error)) => {
+                    return Err(Error::remote(format!(
+                        "{described}: the change stream ended: {error}"
+                    )))
+                }
+                Some(Ok(frame)) => {
+                    if let Some(chunk) = frame.data_ref() {
+                        if self.buffer.len() + chunk.len() > MOST_EVENT_BYTES {
+                            return Err(Error::remote(format!(
+                                "{described}: one event ran past {MOST_EVENT_BYTES} bytes"
+                            )));
+                        }
+
+                        self.buffer.extend_from_slice(chunk);
+                    }
+                }
+            }
+        }
+    }
+
+    /// One complete event out of the buffer, if there is one.
+    fn take(&mut self) -> Option<StreamEvent> {
+        let end = self
+            .buffer
+            .windows(2)
+            .position(|pair| pair == b"\n\n")
+            .map(|at| at + 2)?;
+
+        let block = self.buffer.drain(..end).collect::<Vec<u8>>();
+        let block = String::from_utf8_lossy(&block).into_owned();
+
+        let mut id = None;
+        let mut data: Vec<&str> = Vec::new();
+
+        for line in block.lines() {
+            // A comment is the keep-alive, and the whole of what it means is
+            // that the connection is still there.
+            if line.starts_with(':') {
+                continue;
+            }
+
+            match line.split_once(':') {
+                Some(("id", value)) => id = Some(value.trim().to_owned()),
+                Some(("data", value)) => data.push(value.trim_start()),
+                _ => {}
+            }
+        }
+
+        Some(StreamEvent {
+            id,
+            data: data.join("\n"),
+        })
+    }
 }
 
 #[cfg(test)]

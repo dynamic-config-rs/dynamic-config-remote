@@ -122,6 +122,11 @@ waiting for the next notification is supposed to wait.
 
 ## Watching
 
+Reported to the engine as **`WatchCapability::Native`**. Keyspace
+notifications are fire-and-forget, so a missed one is invisible from
+inside the subscription — which is exactly why the engine re-reads on the
+interval as well.
+
 **Keyspace notifications**, which are genuinely change-driven — no polling, no
 timer. Redis publishes to `__keyspace@{db}__:{key}` when a key is written, and
 this subscribes to exactly that channel — one per key of the set.

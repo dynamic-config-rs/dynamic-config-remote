@@ -156,6 +156,11 @@ hang now stops.
 
 ## Watching
 
+Reported to the engine as **`WatchCapability::Conditional`**: a `HEAD` and
+an ETag comparison, so a poll costs a header rather than the object.
+Bucket notifications would be native, and they are cloud plumbing rather
+than something a client can turn on for itself.
+
 S3 cannot say when an object changes without a notification pipeline — SNS, SQS,
 EventBridge — and that is a deployment's decision rather than a library's. So
 `watch` polls, and says so.

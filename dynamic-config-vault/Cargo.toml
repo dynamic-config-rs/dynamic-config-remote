@@ -23,7 +23,7 @@ dynamic-config-store-core = { workspace = true }
 # A blocking HTTP client with no runtime attached, which is the whole reason
 # Vault gets the blocking trait: nothing here needs an executor.
 ureq = { version = "3.0.12", default-features = false, features = ["rustls", "json"] }
-serde_json = "1.0.127"
+serde_json = "1.0.149"
 
 [dev-dependencies]
 testcontainers = { version = "0.27", features = ["blocking"] }
@@ -46,7 +46,7 @@ rcgen = "0.14"
 # than a lower bound.
 rustls = { version = "0.23.31", default-features = false, features = ["ring", "std"] }
 
-serde = { version = "1.0.221", features = ["derive"] }
+serde = { version = "1.0.228", features = ["derive"] }
 dynamic-config = { workspace = true, features = ["json"] }
 
 [package.metadata.docs.rs]

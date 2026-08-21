@@ -164,6 +164,10 @@ member comes back, and a wrong password does not.
 
 ## Watching
 
+Reported to the engine as **`WatchCapability::Native`**: a caller driving
+this store through the engine gets the watch stream, and a resync on the
+interval in case the stream stalls without saying so.
+
 etcd's watch is a real push stream, so `watch` is a future the caller spawns and
 cancels by dropping — no runtime is imposed and no flag is polled.
 

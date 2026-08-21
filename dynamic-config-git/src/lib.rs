@@ -205,7 +205,7 @@ use std::path::PathBuf;
 use std::sync::Mutex;
 use std::time::Duration;
 
-use dynamic_config::{Error, Fetched, Format, RemoteSource, Watching};
+use dynamic_config::{Error, Fetched, Format, RemoteSource, WatchCapability, Watching};
 use dynamic_config_store_core::documents::{self, Overlap};
 use dynamic_config_store_core::guarded;
 
@@ -739,6 +739,21 @@ impl RemoteSource for GitSource {
                 self.keys.describe()
             ),
         }
+    }
+
+    /// Conditional: a ref advertisement says where the branch points
+    /// without fetching the objects behind it.
+    fn watch_capability(&self) -> WatchCapability {
+        WatchCapability::Conditional
+    }
+
+    fn watch(
+        &self,
+        watching: &Watching,
+        interval: Duration,
+        on_change: &mut dyn FnMut(Fetched) -> Result<(), Error>,
+    ) -> Result<(), Error> {
+        GitSource::watch(self, watching, interval, on_change)
     }
 }
 

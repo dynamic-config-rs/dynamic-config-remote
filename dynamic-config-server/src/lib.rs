@@ -122,11 +122,12 @@
 //! that matters most, where the server is killed mid-run and its clients go
 //! on serving from their last known good document.
 //!
-//! It fetches; it does not subscribe. Following [the change
-//! stream](#the-change-stream) is a dozen lines belonging to whoever owns
-//! the reload cadence, and a task with a backoff and a reconnect policy is
-//! not something this crate should choose on an application's behalf. See
-//! [`client`].
+//! It fetches *and* subscribes: [`ConfigServer::watch`](client::ConfigServer::watch)
+//! follows [the change stream](#the-change-stream), re-fetching whenever the
+//! generation moves and reconnecting from where it left off. Reported as
+//! `WatchCapability::Native`, so a caller driving it through the engine's
+//! `Remote::watch` gets a push rather than a poll without arranging
+//! anything. See [`client`].
 //!
 //! # Observability
 //!

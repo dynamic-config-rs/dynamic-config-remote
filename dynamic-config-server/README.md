@@ -86,6 +86,22 @@ server over TLS, and shows all three cases end to end.
 
 The threat model, in full, is [in the book](https://dynamic-config-rs.github.io/remote/config-server/threat-model.html).
 
+## Reading from it
+
+Behind the `client` feature, `client::ConfigServer` is a `RemoteSource`
+that reads one application-and-profile with a bearer token — and it
+**subscribes**: `watch` follows `GET /{application}/{profile}/stream`,
+re-fetching whenever the generation moves and reconnecting from the
+`Last-Event-ID` it left off at. Resumption is a comparison rather than a
+replay, so a reconnect cannot land past a change and miss it.
+
+Reported to the engine as **`WatchCapability::Native`**, so a caller
+driving it through `Remote::watch` gets a push rather than a poll without
+arranging anything.
+
+Both halves live in one crate so that they are tested against each other
+rather than against a fixture of what each believes the other returns.
+
 ## Documentation
 
 - [The Config Server](https://dynamic-config-rs.github.io/remote/config-server.html) — configuration, deployment, and what each endpoint is for

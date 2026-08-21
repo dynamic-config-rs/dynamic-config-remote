@@ -72,9 +72,8 @@ restarts, so the port stays put while the connection does not.
 
 ## The engine is a dependency, not a sibling
 
-These crates name it with a caret (`dynamic-config = "0.6"`), so an engine
-patch release reaches them with no release here, and a breaking one is
-picked up deliberately. The engine, the macro and the loader are
+These crates name it with a caret, so an engine patch release reaches
+them with no release here, and a breaking one is picked up on purpose. The engine, the macro and the loader are
 [their own repository](https://github.com/dynamic-config-rs/dynamic-config).
 
 ## MSRV

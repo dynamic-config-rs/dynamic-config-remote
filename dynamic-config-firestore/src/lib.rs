@@ -148,7 +148,7 @@ mod value;
 
 use std::time::Duration;
 
-use dynamic_config::{Error, Fetched, Format, RemoteSink, RemoteSource, Watching};
+use dynamic_config::{Error, Fetched, Format, RemoteSink, RemoteSource, WatchCapability, Watching};
 use dynamic_config_store_core::attempts::Attempts;
 use dynamic_config_store_core::documents::{self, Overlap};
 use dynamic_config_store_core::guarded;
@@ -977,6 +977,22 @@ impl RemoteSource for Firestore {
             ),
             None => format!("firestore {}/{}", self.project, self.keys.describe()),
         }
+    }
+
+    /// Conditional: a document read answers with an `updateTime`, which is
+    /// what the loop compares. The REST API has no server-push; gRPC
+    /// `Listen` would, and this client does not speak it.
+    fn watch_capability(&self) -> WatchCapability {
+        WatchCapability::Conditional
+    }
+
+    fn watch(
+        &self,
+        watching: &Watching,
+        interval: Duration,
+        on_change: &mut dyn FnMut(Fetched) -> Result<(), Error>,
+    ) -> Result<(), Error> {
+        Firestore::watch(self, watching, interval, on_change)
     }
 }
 

@@ -221,11 +221,28 @@ believes the other returns — including the case that matters most, where
 the server is killed mid-run and its clients keep serving from their last
 known good document.
 
-It fetches; it does not subscribe. Following this stream is a dozen lines
-— read the generation, call `refresh_remote()` when it moves — and they
-belong to whoever owns the reload cadence, because a task with a backoff
-and a reconnect policy is not a choice this crate should make on an
-application's behalf.
+**It subscribes.** `ConfigServer::watch` follows this stream: connect,
+read events, re-fetch the document when the generation moves, reconnect
+from the `Last-Event-ID` the server left off at. Resumption is a
+comparison rather than a replay — a generation subsumes every one before
+it — so a reconnect cannot land past a change and miss it.
+
+A document is delivered only when it differs from the last one, an event
+that runs past 64 KiB is refused, and a stream silent for fifty seconds is
+treated as dead: the server sends a keep-alive comment every fifteen
+precisely so that silence means something. The reconnect waits are spread
+across a fleet and grow after a failure, so a server coming back up is not
+met by every pod at once.
+
+Through the engine, none of that is something a caller arranges:
+`Remote::watch` drives whichever store is installed, and this one reports
+`WatchCapability::Native`.
+
+[`examples/server_watching.rs`](https://github.com/dynamic-config-rs/dynamic-config-remote/blob/main/dynamic-config-server/examples/server_watching.rs)
+is the whole of it against the compose pair — install a document while it
+runs and the process follows. `served.rs` beside it is the same wiring
+with a poll instead, which is the comparison worth having: what changes is
+how quickly an edit arrives and what asking costs.
 
 ## Metrics, and the credential they need
 

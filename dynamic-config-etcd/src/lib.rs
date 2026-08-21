@@ -191,7 +191,9 @@ use std::future::Future;
 use std::pin::Pin;
 use std::time::Duration;
 
-use dynamic_config::{AsyncRemoteSource, Error, Fetched, Format, RemoteSink};
+use dynamic_config::{
+    AsyncRemoteSource, Error, Fetched, Format, RemoteSink, WatchCapability, Watching,
+};
 use dynamic_config_store_core::attempts::Attempts;
 use dynamic_config_store_core::documents::{self, Overlap};
 use dynamic_config_store_core::guarded;
@@ -1312,6 +1314,25 @@ impl AsyncRemoteSource for Etcd {
 
     fn describe(&self) -> String {
         format!("etcd {} {}", self.endpoints, self.keys.describe())
+    }
+
+    /// Native: a gRPC watch stream, resumed from the revision it left off at.
+    fn watch_capability(&self) -> WatchCapability {
+        WatchCapability::Native
+    }
+
+    /// The watch stream, through the trait.
+    ///
+    /// Neither `watching` nor `interval` is used: cancelling an async watch
+    /// is dropping the future, and a resync belongs to whoever raced a timer
+    /// against it.
+    fn watch<'a>(
+        &'a self,
+        _watching: &'a Watching,
+        _interval: Duration,
+        on_change: &'a mut (dyn FnMut(Fetched) -> Result<(), Error> + Send),
+    ) -> Pin<Box<dyn Future<Output = Result<(), Error>> + Send + 'a>> {
+        Box::pin(async move { Etcd::watch(self, on_change).await })
     }
 }
 

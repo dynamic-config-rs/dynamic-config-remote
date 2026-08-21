@@ -174,6 +174,10 @@ applies instead.
 
 ## Watching
 
+Reported to the engine as **`WatchCapability::Conditional`**: the metadata
+endpoint answers with a version counter, so asking costs a small JSON body
+rather than the secret itself.
+
 Vault is the one store [`dynamic-config`] talks to that cannot say when
 something changed: no watch, no blocking query, no stream. So `watch` polls, and
 says so rather than dressing a timer up as a subscription.

@@ -40,7 +40,7 @@ testcontainers-modules = { version = "0.15", features = ["redis"] }
 # so it is in no build a user of this crate produces.
 rcgen = "0.14"
 
-serde = { version = "1.0.221", features = ["derive"] }
+serde = { version = "1.0.228", features = ["derive"] }
 
 [package.metadata.docs.rs]
 all-features = true

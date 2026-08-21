@@ -160,7 +160,7 @@
 use std::time::Duration;
 
 use base64::Engine;
-use dynamic_config::{Error, Fetched, Format, RemoteSink, RemoteSource, Watching};
+use dynamic_config::{Error, Fetched, Format, RemoteSink, RemoteSource, WatchCapability, Watching};
 use dynamic_config_store_core::attempts::Attempts;
 use dynamic_config_store_core::credential::{Cached, Issued};
 use dynamic_config_store_core::documents::{self, Overlap};
@@ -1257,6 +1257,26 @@ impl RemoteSource for Consul {
         // staging Consul and a production Consul and a wrong environment
         // variable.
         format!("consul {} {}", self.address, self.keys.describe())
+    }
+
+    /// Native: a blocking query parks on the server until the key moves.
+    fn watch_capability(&self) -> WatchCapability {
+        WatchCapability::Native
+    }
+
+    /// The blocking query, through the trait.
+    ///
+    /// `interval` is not used here and is not ignored either: a Consul watch
+    /// waits on the server, and the periodic re-read that catches a query
+    /// answering a stale index forever is
+    /// [`Remote::watch`](dynamic_config::Remote::watch)'s.
+    fn watch(
+        &self,
+        watching: &Watching,
+        _interval: Duration,
+        on_change: &mut dyn FnMut(Fetched) -> Result<(), Error>,
+    ) -> Result<(), Error> {
+        Consul::watch(self, watching, on_change)
     }
 }
 

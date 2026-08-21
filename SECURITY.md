@@ -117,8 +117,9 @@ machine or in CI still matters.
 
 ## Dependencies
 
-The core crate's non-optional dependency list is deliberately short — `figment`,
-`serde`, `arc-swap` — and every network client, format parser and crypto stack
+The core crate's non-optional dependency list is deliberately short —
+`serde` and `arc-swap`, plus the default resolution backend, which
+`--no-default-features` removes — and every network client, format parser and crypto stack
 is behind a feature or in a companion crate, so a build carries only what it
 asked for. A `dynamic-config` with default features pulls in no cryptography, no
 HTTP client and no runtime.

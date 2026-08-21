@@ -174,6 +174,10 @@ Neither applies to `watch`, which is long-lived on purpose.
 
 ## Watching
 
+Reported to the engine as **`WatchCapability::Native`**: a caller driving
+this store through the engine gets the KV watch, and a resync on the
+interval in case the subscription goes quiet.
+
 A KV bucket is a stream, so `watch` is a future the caller spawns and cancels by
 dropping — no runtime is imposed and no flag is polled.
 

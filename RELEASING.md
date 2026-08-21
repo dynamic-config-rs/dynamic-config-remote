@@ -198,10 +198,12 @@ rather than the workspace one.
   of the public contract. The store crates, the server and the bindings
   declare their own floors in their own repositories — a companion pays for
   what it pulls in.
-- figment is the loader, and its behaviour is this crate's behaviour. A figment
-  upgrade that changes how values are merged or how environment strings are read
-  is a breaking change here even when no signature moves — `tests/loader.rs`
-  exists to make that visible rather than surprising.
+- The engine resolves, and its behaviour is this crate's behaviour. A change
+  to how values are merged or how environment strings are read is a breaking
+  change here even when no signature moves — `tests/loader.rs` exists to make
+  that visible rather than surprising. Which *backend* folds the layers is
+  not that kind of change: every engine is held to the same merge rule, leaf
+  by leaf, in the engine's own agreement tests.
 - The traces a value carries are contract too: `Origin::Remote` names whatever
   the source's own `describe()` returns, so changing that string in a companion
   crate changes what users see in an error.

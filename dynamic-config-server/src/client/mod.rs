@@ -20,16 +20,17 @@
 //! # }
 //! ```
 //!
-//! ## What it does not do
+//! ## Watching
 //!
-//! **It does not subscribe.** `GET /{application}/{profile}/stream` carries a
-//! generation, and a client that follows it calls
-//! `refresh_remote()` when the number
-//! moves — a loop of a dozen lines that belongs to whoever owns the reload
-//! cadence. Building it in would mean this crate owning a task, a backoff and
-//! a reconnect policy that the application is better placed to choose; what
-//! this crate owes is the half that is fiddly to get right, which is the
-//! bounded, deadline-covered, credential-carrying fetch below.
+//! It subscribes. `GET /{application}/{profile}/stream` carries a generation
+//! number, and [`ConfigServer::watch`] follows it: connect, read events,
+//! re-fetch the document when the number moves, reconnect with the
+//! `Last-Event-ID` the server left off at. The reconnect is a comparison
+//! rather than a replay — a generation subsumes every one before it — so
+//! there is no window in which a change can be missed by being reconnected
+//! past.
+//!
+//! ## What it does not do
 //!
 //! **It does not verify provenance.** The document arrives as JSON with no
 //! signature, so a client trusts the server exactly as far as TLS and the
@@ -41,11 +42,11 @@ mod http;
 use std::sync::Arc;
 use std::time::Duration;
 
-use dynamic_config::{Error, Fetched, Format, RemoteSource};
+use dynamic_config::{Error, Fetched, Format, Pace, RemoteSource, WatchCapability, Watching};
 use dynamic_config_store_core::tls::TlsConfig;
 use dynamic_config_store_core::{redacted, LoneAuthority};
 
-use http::{Budget, Connection, Endpoint};
+use http::{Budget, Connection, Endpoint, Events, Get};
 
 /// How much of a response body is read before it is refused.
 ///
@@ -278,9 +279,12 @@ impl ConfigServer {
         let response = connection
             .get(
                 &endpoint,
-                &path,
-                bearer,
-                "application/json",
+                Get {
+                    path: &path,
+                    token: bearer,
+                    accept: "application/json",
+                    resume: None,
+                },
                 budget,
                 &self.described,
             )
@@ -320,6 +324,213 @@ fn extract(text: &str, described: &str) -> Result<String, Error> {
         .map_err(|_| Error::remote(format!("{described}: the document will not re-render")))
 }
 
+impl ConfigServer {
+    /// How long a stream may be silent before it is treated as dead.
+    ///
+    /// The server sends a comment every fifteen seconds precisely so that
+    /// silence means something; three of those is a connection a proxy has
+    /// dropped without telling either end.
+    const IDLE: Duration = Duration::from_secs(50);
+
+    /// Follows the change stream, fetching whenever the generation moves.
+    ///
+    /// Blocks until `watching` is stopped, so it belongs on a thread of its
+    /// own. `interval` is the reconnect pace rather than a poll: the stream
+    /// pushes, and this is how long to wait before trying again when it
+    /// ends. The waits are spread across a fleet and grow after a failure,
+    /// so a server coming back up is not met by every pod at once.
+    ///
+    /// Each document is delivered only when it differs from the last one:
+    /// a generation moves for every install, and an install that changed
+    /// nothing this caller can see should wake nothing.
+    ///
+    /// # Errors
+    ///
+    /// If `on_change` refuses a document. A connection failing is not an
+    /// error — reconnecting through an outage is what this is for.
+    pub fn watch<F>(
+        &self,
+        watching: &Watching,
+        interval: Duration,
+        mut on_change: F,
+    ) -> Result<(), Error>
+    where
+        F: FnMut(Fetched) -> Result<(), Error>,
+    {
+        // One runtime for the whole watch, unlike `fetch`'s per-call one: a
+        // watch is a long-lived thing by definition, so the argument that
+        // makes a per-call runtime free does not apply to it.
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .map_err(|error| {
+                Error::remote(format!(
+                    "{}: no runtime for the watch: {error}",
+                    self.described
+                ))
+            })?;
+
+        runtime.block_on(async {
+            let mut pace = Pace::new(interval);
+            let mut resume: Option<String> = None;
+            let mut last: Option<Fetched> = None;
+
+            while watching.keep_going() {
+                match self
+                    .subscribed(watching, &mut resume, &mut last, &mut on_change)
+                    .await
+                {
+                    Ok(()) => pace.succeeded(),
+                    // The caller refusing a document is the one failure this
+                    // loop does not own: it is a decision, not an outage.
+                    Err(Ended::Refused(error)) => return Err(error),
+                    // Everything else is swallowed on purpose, credentials
+                    // included: a token file rotating between two
+                    // connections looks exactly like a token that is wrong,
+                    // and a watch that stopped on the first would be a pod
+                    // that never recovered from a routine rotation.
+                    Err(Ended::Disconnected) => pace.failed(),
+                }
+
+                sleep_while(watching, pace.next_wait()).await;
+            }
+
+            Ok(())
+        })
+    }
+
+    /// One connection's worth of stream, from subscribe to close.
+    async fn subscribed<F>(
+        &self,
+        watching: &Watching,
+        resume: &mut Option<String>,
+        last: &mut Option<Fetched>,
+        on_change: &mut F,
+    ) -> Result<(), Ended>
+    where
+        F: FnMut(Fetched) -> Result<(), Error>,
+    {
+        let endpoint = Endpoint::parse(&self.url, &self.described).map_err(Ended::store)?;
+        let path = endpoint.path(&format!("/{}/{}/stream", self.application, self.profile));
+
+        // The budget covers getting the stream open — connect, handshake,
+        // request — and stops there. A deadline on the stream itself would
+        // be a deadline on the configuration not changing.
+        let budget = Budget::starting(self.timeout);
+        let secure = endpoint.secure;
+        let tls = self.tls_client(secure).map_err(Ended::store)?;
+        let mut connection = Connection::open(&endpoint, tls, budget, &self.described)
+            .await
+            .map_err(Ended::store)?;
+
+        let bearer = self.bearer().map_err(Ended::store)?;
+        let response = connection
+            .get(
+                &endpoint,
+                Get {
+                    path: &path,
+                    token: bearer.as_deref(),
+                    accept: "text/event-stream",
+                    resume: resume.as_deref(),
+                },
+                budget,
+                &self.described,
+            )
+            .await
+            .map_err(Ended::store)?;
+
+        if !response.status().is_success() {
+            return Err(Ended::store(http::refused(
+                response.status(),
+                &self.described,
+            )));
+        }
+
+        let mut events = Events::new(response);
+
+        while watching.keep_going() {
+            let next = events
+                .next(Self::IDLE, &self.described)
+                .await
+                .map_err(Ended::store)?;
+
+            let Some(event) = next else {
+                // The server closed it. Ordinary — a rolling restart does
+                // exactly this — and the loop above reconnects.
+                return Ok(());
+            };
+
+            if let Some(id) = event.id {
+                *resume = Some(id);
+            }
+
+            // The event says *something landed*; the document is fetched
+            // from the endpoint that serves documents. Reading the number
+            // out of the payload is not needed for that and is not done:
+            // an install is an install.
+            let _ = event.data;
+
+            let fetched = self.read().await.map_err(Ended::store)?;
+
+            if last.as_ref() != Some(&fetched) {
+                *last = Some(fetched.clone());
+                on_change(fetched).map_err(Ended::Refused)?;
+            }
+        }
+
+        Ok(())
+    }
+
+    /// The bearer token to present, file first.
+    fn bearer(&self) -> Result<Option<String>, Error> {
+        match &self.token_file {
+            Some(file) => std::fs::read_to_string(file)
+                .map(|token| Some(token.trim().to_owned()))
+                .map_err(|error| {
+                    Error::auth(format!(
+                        "{}: reading the bearer token file: {error}",
+                        self.described
+                    ))
+                }),
+            None => Ok(self.token.clone()),
+        }
+    }
+}
+
+/// Why one connection's worth of stream ended.
+///
+/// The distinction the loop above acts on, and the only one it needs: a
+/// connection that failed is waited out and tried again, and a caller that
+/// refused a document has made a decision the loop has no business
+/// overriding.
+enum Ended {
+    /// The connection failed, or the server refused the subscription. The
+    /// error is not carried: the loop waits and tries again, and a message
+    /// per reconnect through an outage is a log nobody can read.
+    Disconnected,
+    Refused(Error),
+}
+
+impl Ended {
+    fn store(_error: Error) -> Self {
+        Self::Disconnected
+    }
+}
+
+/// Sleeps for `total`, waking early once the watch is stopped.
+async fn sleep_while(watching: &Watching, total: Duration) {
+    const SLICE: Duration = Duration::from_millis(250);
+
+    let mut left = total;
+
+    while left > Duration::ZERO && watching.keep_going() {
+        let slice = left.min(SLICE);
+
+        tokio::time::sleep(slice).await;
+        left -= slice;
+    }
+}
+
 impl RemoteSource for ConfigServer {
     fn fetch(&self) -> Result<Fetched, Error> {
         // A blocking `fetch` on a client built from an async stack: one
@@ -343,6 +554,20 @@ impl RemoteSource for ConfigServer {
 
     fn describe(&self) -> String {
         self.described.clone()
+    }
+
+    /// Native: the server pushes a generation down a `text/event-stream`.
+    fn watch_capability(&self) -> WatchCapability {
+        WatchCapability::Native
+    }
+
+    fn watch(
+        &self,
+        watching: &Watching,
+        interval: Duration,
+        on_change: &mut dyn FnMut(Fetched) -> Result<(), Error>,
+    ) -> Result<(), Error> {
+        ConfigServer::watch(self, watching, interval, on_change)
     }
 }
 

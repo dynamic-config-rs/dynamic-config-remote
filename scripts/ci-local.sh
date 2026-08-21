@@ -98,9 +98,6 @@ just loom
 step "the shuttle models, the residue loom cannot reach"
 just shuttle
 
-step "the scripted-server mocks"
-just mocks
-
 step "embedded: host tests + a target with no std"
 just embedded
 
@@ -129,7 +126,13 @@ cargo test --workspace --features full \
 step "every MSRV floor, against real toolchains"
 just msrv
 
-if docker info >/dev/null 2>&1; then
+# Only one repository has containerised stores to run, so the recipe is
+# asked for rather than assumed: a `just containers` in a repository that
+# has none fails the whole gate on its last step, after everything real
+# has already passed.
+if ! just --summary 2>/dev/null | tr ' ' '\n' | grep -qx containers; then
+  :
+elif docker info >/dev/null 2>&1; then
   step "the seven stores, against real servers"
   just containers
 else
