@@ -68,8 +68,8 @@ with your privileges.
 
 | Version | Supported |
 |---|---|
-| 0.8.x | ✅ the latest patch |
-| ≤ 0.7 | — end of life |
+| 0.9.x | ✅ the latest patch |
+| ≤ 0.8 | — end of life |
 
 Security fixes land on the **latest patch of the line above** and
 nothing is backported before 1.0: when a release ships, every prior

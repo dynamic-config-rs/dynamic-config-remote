@@ -22,8 +22,8 @@ it. These crates read those.
 
 ```toml
 [dependencies]
-dynamic-config = { version = "0.8.0", features = ["toml"] }
-dynamic-config-etcd = "0.8.0"
+dynamic-config = { version = "0.9.0", features = ["toml"] }
+dynamic-config-etcd = "0.9.0"
 ```
 
 ```rust,ignore
