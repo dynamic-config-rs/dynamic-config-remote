@@ -25,7 +25,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use bytes::Bytes;
-use dynamic_config::Error;
+use dynamic_config::{Error, Watching};
 use http_body_util::{BodyExt as _, Empty, Limited};
 use hyper::body::Incoming;
 use hyper::client::conn::http1::SendRequest;
@@ -263,7 +263,20 @@ impl Connection {
             }),
         })
     }
+}
 
+/// What one `GET` is: a path, a credential, what is acceptable back, and
+/// where a stream left off.
+pub(super) struct Get<'a> {
+    pub(super) path: &'a str,
+    pub(super) token: Option<&'a str>,
+    pub(super) accept: &'a str,
+    /// `Last-Event-ID`, for a subscription being resumed. `None` for a
+    /// plain fetch, which has nothing to resume.
+    pub(super) resume: Option<&'a str>,
+}
+
+impl Connection {
     /// One `GET`, with the bearer token if there is one.
     ///
     /// # Errors
@@ -273,12 +286,17 @@ impl Connection {
     pub(super) async fn get(
         &mut self,
         endpoint: &Endpoint,
-        path: &str,
-        token: Option<&str>,
-        accept: &str,
+        request: Get<'_>,
         budget: Budget,
         described: &str,
     ) -> Result<Response<Incoming>, Error> {
+        let Get {
+            path,
+            token,
+            accept,
+            resume,
+        } = request;
+
         let mut request = Request::builder()
             .method("GET")
             .uri(path)
@@ -287,6 +305,13 @@ impl Connection {
 
         if let Some(token) = token {
             request = request.header(AUTHORIZATION, format!("Bearer {token}"));
+        }
+
+        // Where the last stream stopped. The server answers a resumed
+        // subscription with the *current* generation rather than a replay,
+        // so this is a comparison and not a cursor into a buffer.
+        if let Some(last) = resume {
+            request = request.header("last-event-id", last);
         }
 
         // The builder's error is dropped rather than reported, and the token
@@ -394,9 +419,237 @@ where
     })
 }
 
+/// Resolves once the watch has been stopped.
+///
+/// Polled in slices because a [`Watching`] is a flag rather than a signal:
+/// a quarter second is the same responsiveness the store crates' loops
+/// have, and it costs one timer per idle connection.
+async fn stopped(watching: &Watching) {
+    const SLICE: Duration = Duration::from_millis(250);
+
+    while watching.keep_going() {
+        tokio::time::sleep(SLICE).await;
+    }
+}
+
+/// A `text/event-stream`, read one event at a time.
+///
+/// Enough of server-sent events for this one endpoint: `id`, `data`, blank
+/// line ends an event, a line starting `:` is a comment. Not a general SSE
+/// client — there is no `retry`, no multi-line `data` reassembly beyond
+/// joining with newlines, and no `event` type dispatch, because the stream
+/// this reads carries one kind of event and a number.
+///
+/// **Line endings are `\n`, not `\r\n`.** The server on the other side of
+/// this is the one in this crate and it writes bare newlines; a proxy that
+/// rewrote them would leave this reader waiting for a blank line it never
+/// sees, which the idle deadline then ends. Named rather than handled: the
+/// pair is tested against each other, and a reader that guessed at
+/// rewritten framing would be guessing about a deployment nobody has.
+///
+/// **Bounded twice.** An event that never ends is refused past
+/// [`MOST_EVENT_BYTES`], and a stream that goes silent is abandoned after
+/// `idle` — the server sends a comment every fifteen seconds precisely so
+/// that silence means something.
+pub(super) struct Events {
+    body: Incoming,
+    buffer: Vec<u8>,
+    finished: bool,
+}
+
+/// The most one event may carry before the stream is refused.
+///
+/// The events this reads are a hundred bytes. The bound is for the server
+/// that is not the server it thinks it is talking to.
+const MOST_EVENT_BYTES: usize = 64 * 1024;
+
+/// One event: what it was called, and what it carried.
+pub(super) struct StreamEvent {
+    pub(super) id: Option<String>,
+    pub(super) data: String,
+    /// Whether the block carried a field at all.
+    ///
+    /// A keep-alive is a comment — `axum` writes `:\n\n` every fifteen
+    /// seconds — and it means one thing: the connection is still there.
+    /// Handed to the caller as an event that carried nothing, rather than
+    /// swallowed here, because the caller's loop is where the watch token
+    /// is checked: swallowing it left a stopped watch waiting out the
+    /// fifty-second idle deadline before it noticed.
+    pub(super) carried: bool,
+}
+
+impl Events {
+    pub(super) fn new(response: Response<Incoming>) -> Self {
+        Self {
+            body: response.into_body(),
+            buffer: Vec::new(),
+            finished: false,
+        }
+    }
+
+    /// The next event, or `None` when the server closed the stream.
+    ///
+    /// # Errors
+    ///
+    /// If the connection fails, an event runs past the bound, or nothing at
+    /// all arrives within `idle`.
+    /// A stopped watch does not wait for the stream to say something.
+    ///
+    /// The pending read is raced against the token: without it, stopping
+    /// waited for the next keep-alive — fifteen seconds — and on a
+    /// connection that had half-closed without saying so, the full idle
+    /// deadline of fifty. The other stores in this family stop within a
+    /// quarter second, and a `RemoteWatch` that takes a minute to let go is
+    /// a shutdown somebody will call hung.
+    ///
+    /// Cancelling the frame read is safe *here* because there is nothing
+    /// after it: a stop ends this connection, and the body is dropped with
+    /// it rather than read again.
+    pub(super) async fn next(
+        &mut self,
+        watching: &Watching,
+        idle: Duration,
+        described: &str,
+    ) -> Result<Option<StreamEvent>, Error> {
+        loop {
+            if let Some(event) = self.take() {
+                return Ok(Some(event));
+            }
+
+            if self.finished {
+                return Ok(None);
+            }
+
+            let frame = tokio::select! {
+                biased;
+
+                frame = deadline(idle, self.body.frame(), described, "the change stream") => frame?,
+                () = stopped(watching) => {
+                    self.finished = true;
+
+                    return Ok(None);
+                }
+            };
+
+            match frame {
+                None => {
+                    self.finished = true;
+
+                    // Whatever is left without a blank line after it is a
+                    // half-written event, and half an event is not one.
+                    return Ok(None);
+                }
+                Some(Err(error)) => {
+                    return Err(Error::remote(format!(
+                        "{described}: the change stream ended: {error}"
+                    )))
+                }
+                Some(Ok(frame)) => {
+                    if let Some(chunk) = frame.data_ref() {
+                        if self.buffer.len() + chunk.len() > MOST_EVENT_BYTES {
+                            return Err(Error::remote(format!(
+                                "{described}: one event ran past {MOST_EVENT_BYTES} bytes"
+                            )));
+                        }
+
+                        self.buffer.extend_from_slice(chunk);
+                    }
+                }
+            }
+        }
+    }
+
+    /// One complete event out of the buffer, if there is one.
+    ///
+    /// One complete block out of the buffer, if there is one.
+    ///
+    /// **A block that carried no field is not a change**, and
+    /// [`carried`](StreamEvent::carried) is how it says so. Reporting a
+    /// keep-alive as an ordinary event told the caller that something had
+    /// landed: a fresh connection, a handshake and a re-read of the whole
+    /// document, every fifteen seconds of quiet, per client — the poll this
+    /// design exists to replace.
+    fn take(&mut self) -> Option<StreamEvent> {
+        let end = self
+            .buffer
+            .windows(2)
+            .position(|pair| pair == b"\n\n")
+            .map(|at| at + 2)?;
+
+        let block = self.buffer.drain(..end).collect::<Vec<u8>>();
+
+        Some(Self::parse(&String::from_utf8_lossy(&block)))
+    }
+
+    /// One block's fields. Split out so the rule can be tested without a
+    /// connection: what a block *means* is decided here, and everything
+    /// around it is I/O.
+    fn parse(block: &str) -> StreamEvent {
+        let mut id = None;
+        let mut data: Vec<&str> = Vec::new();
+        let mut carried = false;
+
+        for line in block.lines() {
+            // A comment is the keep-alive, and the whole of what it means is
+            // that the connection is still there.
+            if line.starts_with(':') {
+                continue;
+            }
+
+            match line.split_once(':') {
+                Some(("id", value)) => {
+                    id = Some(value.trim().to_owned());
+                    carried = true;
+                }
+                Some(("data", value)) => {
+                    data.push(value.trim_start());
+                    carried = true;
+                }
+                _ => {}
+            }
+        }
+
+        StreamEvent {
+            id,
+            data: data.join("\n"),
+            carried,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// **A keep-alive is not a change, and a real event behind one is.**
+    ///
+    /// `axum`'s `KeepAlive` writes `:\n\n` every fifteen seconds. Reported
+    /// as an ordinary event it made a quiet client re-read the whole
+    /// document on that cadence — the poll this client replaces — and
+    /// swallowing it here instead left a stopped watch waiting out the
+    /// idle deadline, because the caller's loop is where the watch token is
+    /// read. So it arrives, and says it carried nothing.
+    #[test]
+    fn a_keep_alive_comment_carries_nothing_and_a_real_event_carries_its_fields() {
+        let keep_alive = Events::parse(":\n");
+
+        assert!(!keep_alive.carried, "a comment carries no field");
+        assert_eq!(keep_alive.id, None);
+        assert_eq!(keep_alive.data, "");
+
+        let event = Events::parse("id: 7\ndata: {\"generation\":7}\n");
+
+        assert!(event.carried, "an id and a data line are fields");
+        assert_eq!(event.id.as_deref(), Some("7"));
+        assert_eq!(event.data, "{\"generation\":7}");
+
+        // A block that is a comment *and* an event is an event: what the
+        // flag answers is "did anything land", not "was anything skipped".
+        let both = Events::parse(":\nid: 8\n");
+
+        assert!(both.carried);
+        assert_eq!(both.id.as_deref(), Some("8"));
+    }
 
     fn endpoint(url: &str) -> Endpoint {
         Endpoint::parse(url, "config-server").expect("a URL this crate accepts")

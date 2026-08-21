@@ -4,8 +4,8 @@ Read [`dynamic-config`] configuration from HashiCorp Vault's KV v2 store.
 
 ```toml
 [dependencies]
-dynamic-config = "0.8.0"
-dynamic-config-vault = "0.8.0"
+dynamic-config = "0.9.0"
+dynamic-config-vault = "0.9.0"
 ```
 
 ```rust
@@ -173,6 +173,10 @@ An HTTP client supplied through `with_agent` brings its own timeout, which
 applies instead.
 
 ## Watching
+
+Reported to the engine as **`WatchCapability::Conditional`**: the metadata
+endpoint answers with a version counter, so asking costs a small JSON body
+rather than the secret itself.
 
 Vault is the one store [`dynamic-config`] talks to that cannot say when
 something changed: no watch, no blocking query, no stream. So `watch` polls, and

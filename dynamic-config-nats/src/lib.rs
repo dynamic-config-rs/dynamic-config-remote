@@ -219,7 +219,9 @@ use std::pin::Pin;
 use std::time::Duration;
 
 use async_nats::jetstream::kv::{Operation, Store};
-use dynamic_config::{AsyncRemoteSource, Error, Fetched, Format, RemoteSink};
+use dynamic_config::{
+    AsyncRemoteSource, Error, Fetched, Format, RemoteSink, WatchCapability, Watching,
+};
 use dynamic_config_store_core::attempts::Attempts;
 use dynamic_config_store_core::documents::{self, Overlap};
 use dynamic_config_store_core::{guarded, LoneAuthority};
@@ -882,6 +884,21 @@ impl AsyncRemoteSource for Nats {
             self.bucket,
             self.keys.describe()
         )
+    }
+
+    /// Native: a JetStream KV watch delivers every revision of the key.
+    fn watch_capability(&self) -> WatchCapability {
+        WatchCapability::Native
+    }
+
+    /// The KV watch, through the trait. As etcd's, neither argument applies.
+    fn watch<'a>(
+        &'a self,
+        _watching: &'a Watching,
+        _interval: Duration,
+        on_change: &'a mut (dyn FnMut(Fetched) -> Result<(), Error> + Send),
+    ) -> Pin<Box<dyn Future<Output = Result<(), Error>> + Send + 'a>> {
+        Box::pin(async move { Nats::watch(self, on_change).await })
     }
 }
 

@@ -4,8 +4,8 @@ Read [`dynamic-config`] configuration from a Redis key.
 
 ```toml
 [dependencies]
-dynamic-config = "0.8.0"
-dynamic-config-redis = "0.8.0"
+dynamic-config = "0.9.0"
+dynamic-config-redis = "0.9.0"
 ```
 
 ```rust
@@ -121,6 +121,11 @@ It bounds each read `watch` performs, not the watch itself: a subscription
 waiting for the next notification is supposed to wait.
 
 ## Watching
+
+Reported to the engine as **`WatchCapability::Native`**. Keyspace
+notifications are fire-and-forget, so a missed one is invisible from
+inside the subscription — which is exactly why the engine re-reads on the
+interval as well.
 
 **Keyspace notifications**, which are genuinely change-driven — no polling, no
 timer. Redis publishes to `__keyspace@{db}__:{key}` when a key is written, and

@@ -48,6 +48,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "03918c3dbd7701a85c6b9887732e2921175f26c350b4563841d0958c21d57e6d"
 
 [[package]]
+name = "arraydeque"
+version = "0.5.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7d902e3d592a523def97af8f317b08ce16b7ab854c1985a0c671e6f15cebc236"
+
+[[package]]
 name = "ascii"
 version = "1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -928,6 +934,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "config"
+version = "0.15.25"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b85f248a4de22d204ceabc6299d89d2c70fbd7f09fea53c06c852369652d8139"
+dependencies = [
+ "pathdiff",
+ "serde_core",
+ "serde_json",
+ "toml 1.1.4+spec-1.1.0",
+ "winnow 1.0.4",
+ "yaml-rust2",
+]
+
+[[package]]
 name = "const-oid"
 version = "0.9.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1263,11 +1283,12 @@ checksum = "d0881ea181b1df73ff77ffaaf9c7544ecc11e82fba9b5f27b262a3c73a332555"
 
 [[package]]
 name = "dynamic-config"
-version = "0.8.0"
+version = "0.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "583c63e4677f90e11d393fd86450c6e02cdd5b24bcf823f9591afa39eedce8c3"
+checksum = "0245845d160b0a450130722105a94dc488893a4ff862f275d38576ad353bbb75"
 dependencies = [
  "arc-swap",
+ "config",
  "dynamic-config-macros",
  "figment",
  "loom",
@@ -1277,12 +1298,12 @@ dependencies = [
  "serde_yaml",
  "shuttle",
  "tokio",
- "toml 0.9.12+spec-1.1.0",
+ "toml 1.1.4+spec-1.1.0",
 ]
 
 [[package]]
 name = "dynamic-config-consul"
-version = "0.8.0"
+version = "0.9.0"
 dependencies = [
  "base64 0.23.1",
  "dynamic-config",
@@ -1297,7 +1318,7 @@ dependencies = [
 
 [[package]]
 name = "dynamic-config-etcd"
-version = "0.8.0"
+version = "0.9.0"
 dependencies = [
  "dynamic-config",
  "dynamic-config-store-core",
@@ -1309,7 +1330,7 @@ dependencies = [
 
 [[package]]
 name = "dynamic-config-firestore"
-version = "0.8.0"
+version = "0.9.0"
 dependencies = [
  "dynamic-config",
  "dynamic-config-store-core",
@@ -1322,7 +1343,7 @@ dependencies = [
 
 [[package]]
 name = "dynamic-config-git"
-version = "0.8.0"
+version = "0.9.0"
 dependencies = [
  "dynamic-config",
  "dynamic-config-store-core",
@@ -1336,9 +1357,9 @@ dependencies = [
 
 [[package]]
 name = "dynamic-config-macros"
-version = "0.8.0"
+version = "0.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4914a2922931028329295898184036a863248e014f5fbeca861efc9e15aca395"
+checksum = "31bc24ebed394ef05aa92e1f7b8f46b801b0ccf41890440091364be07e4abe40"
 dependencies = [
  "proc-macro-crate",
  "proc-macro2",
@@ -1348,7 +1369,7 @@ dependencies = [
 
 [[package]]
 name = "dynamic-config-nats"
-version = "0.8.0"
+version = "0.9.0"
 dependencies = [
  "async-nats",
  "dynamic-config",
@@ -1362,7 +1383,7 @@ dependencies = [
 
 [[package]]
 name = "dynamic-config-redis"
-version = "0.8.0"
+version = "0.9.0"
 dependencies = [
  "dynamic-config",
  "dynamic-config-store-core",
@@ -1375,7 +1396,7 @@ dependencies = [
 
 [[package]]
 name = "dynamic-config-s3"
-version = "0.8.0"
+version = "0.9.0"
 dependencies = [
  "aws-config",
  "aws-sdk-s3",
@@ -1392,7 +1413,7 @@ dependencies = [
 
 [[package]]
 name = "dynamic-config-server"
-version = "0.8.0"
+version = "0.9.0"
 dependencies = [
  "axum",
  "bytes",
@@ -1417,14 +1438,14 @@ dependencies = [
 
 [[package]]
 name = "dynamic-config-store-core"
-version = "0.8.0"
+version = "0.9.0"
 dependencies = [
  "dynamic-config",
 ]
 
 [[package]]
 name = "dynamic-config-vault"
-version = "0.8.0"
+version = "0.9.0"
 dependencies = [
  "dynamic-config",
  "dynamic-config-store-core",
@@ -2633,6 +2654,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "hashlink"
+version = "0.11.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "824e001ac4f3012dd16a264bec811403a67ca9deb6c102fc5049b32c4574b35f"
+dependencies = [
+ "hashbrown 0.16.1",
+]
+
+[[package]]
 name = "heapless"
 version = "0.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3567,6 +3597,12 @@ dependencies = [
  "structmeta",
  "syn 2.0.119",
 ]
+
+[[package]]
+name = "pathdiff"
+version = "0.2.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "df94ce210e5bc13cb6651479fa48d14f601d9858cfe0467f43ae157023b938d3"
 
 [[package]]
 name = "pear"
@@ -5070,17 +5106,17 @@ dependencies = [
 
 [[package]]
 name = "toml"
-version = "0.9.12+spec-1.1.0"
+version = "1.1.4+spec-1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cf92845e79fc2e2def6a5d828f0801e29a2f8acc037becc5ab08595c7d5e9863"
+checksum = "3aace63f4bbcdfc2c965b059de67119c89c4017a70d633be6c104910f67056f5"
 dependencies = [
  "indexmap 2.14.0",
  "serde_core",
  "serde_spanned 1.1.1",
- "toml_datetime 0.7.5+spec-1.1.0",
+ "toml_datetime 1.1.1+spec-1.1.0",
  "toml_parser",
  "toml_writer",
- "winnow 0.7.15",
+ "winnow 1.0.4",
 ]
 
 [[package]]
@@ -5090,15 +5126,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "22cddaf88f4fbc13c51aebbf5f8eceb5c7c5a9da2ac40a13519eb5b0a0e8f11c"
 dependencies = [
  "serde",
-]
-
-[[package]]
-name = "toml_datetime"
-version = "0.7.5+spec-1.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "92e1cfed4a3038bc5a127e35a2d360f145e1f4b971b551a2ba5fd7aedf7e1347"
-dependencies = [
- "serde_core",
 ]
 
 [[package]]
@@ -5966,6 +5993,17 @@ name = "xxhash-rust"
 version = "0.8.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "aee1b19627c7c60102ab80d3a9cbe18de90bfe03bfa6c3715447681f0e8c8af6"
+
+[[package]]
+name = "yaml-rust2"
+version = "0.11.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b36710ce3a279cfce8465dbab826f161675a262950b922cb2c3663852dfe9eb0"
+dependencies = [
+ "arraydeque",
+ "encoding_rs",
+ "hashlink",
+]
 
 [[package]]
 name = "yansi"

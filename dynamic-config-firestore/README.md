@@ -4,8 +4,8 @@ Read [`dynamic-config`] configuration from a Google Cloud Firestore document.
 
 ```toml
 [dependencies]
-dynamic-config = "0.8.0"
-dynamic-config-firestore = "0.8.0"
+dynamic-config = "0.9.0"
+dynamic-config-firestore = "0.9.0"
 ```
 
 ```rust
@@ -137,6 +137,10 @@ covers fetching a token from the metadata server — that request goes through t
 same client.
 
 ## Watching
+
+Reported to the engine as **`WatchCapability::Conditional`**: a read
+answers with an `updateTime`, which is what the loop compares. gRPC
+`Listen` would be native, and this client speaks REST.
 
 Firestore *can* push — the real-time API is a gRPC stream — and this deliberately
 does not use it: that would put a gRPC stack in a crate whose whole point is a

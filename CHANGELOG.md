@@ -35,6 +35,64 @@ deliberately, with an entry under Changed saying so.
 
 ## [Unreleased]
 
+## [0.9.0] — 2026-08-21
+
+### Changed
+
+- **The engine floor is 0.9**, which is what makes this wave 0.9.0 too:
+  the watch contract lives in the engine, so a store implementing it
+  cannot build against an older one. Two transitive floors move with
+  it — `serde` to `1.0.228` and `serde_json` to `1.0.149`, both
+  required by the crate the engine folds with. Neither moves the MSRV.
+
+### Added
+
+- **Every store says how it learns that its document changed, and
+  watches through the trait.** The engine's 0.9 carries the contract —
+  `WatchCapability`, `RemoteSource::watch`, `Remote::watch` — and each
+  store now answers it with the mechanism it already had:
+
+  | store | capability | mechanism |
+  |---|---|---|
+  | consul | Native | a blocking query on `X-Consul-Index` |
+  | etcd | Native | the gRPC watch stream |
+  | nats | Native | a JetStream KV watch |
+  | redis | Native | keyspace notifications |
+  | config-server | Native | **new** — the change stream, below |
+  | vault | Conditional | the KV metadata version counter |
+  | s3 | Conditional | `HEAD` and an ETag |
+  | git | Conditional | the ref advertisement |
+  | firestore | Conditional | `updateTime` |
+
+  What changes for a caller: a watch is reachable through the *installed
+  source* rather than through the concrete type. A program that swapped
+  Vault for etcd used to keep polling, because the type its watch was
+  written against had been erased; `Remote::watch` now drives whichever
+  is installed and gets a push where there is one to get.
+
+  Nothing in a store's own surface changed. Each keeps its inherent
+  `watch`, and the trait method forwards to it.
+
+- **`dynamic-config-server`: the client subscribes.**
+  `ConfigServer::watch` follows `GET /{application}/{profile}/stream`:
+  connect, read events, re-fetch when the generation moves, reconnect
+  from the `Last-Event-ID` the server left off at. The server has served
+  that stream since 0.7 and no client followed it, which made the
+  endpoint something you had to write a loop for.
+
+  Resumption is a comparison rather than a replay — a generation
+  subsumes every one before it — so a reconnect cannot land past a
+  change and miss it. A document is delivered only when it differs from
+  the last one, an event that runs past 64 KiB is refused, and a stream
+  that goes silent for fifty seconds is treated as dead: the server
+  sends a keep-alive comment every fifteen precisely so that silence
+  means something. Tested against the real router, as the rest of the
+  client half is.
+
+  `examples/server_watching.rs` runs it against the compose pair, beside
+  the `served` example's poll — the two side by side are the comparison
+  worth having.
+
 ## [0.8.0] — 2026-08-19
 
 ### Changed
@@ -102,7 +160,8 @@ deliberately, with an entry under Changed saying so.
   crates are now their own book, at
   [dynamic-config-rs.github.io/remote/](https://dynamic-config-rs.github.io/remote/).
 
-[Unreleased]: https://github.com/dynamic-config-rs/dynamic-config-remote/compare/v0.8.0...HEAD
+[Unreleased]: https://github.com/dynamic-config-rs/dynamic-config-remote/compare/v0.9.0...HEAD
+[0.9.0]: https://github.com/dynamic-config-rs/dynamic-config-remote/compare/v0.8.0...v0.9.0
 [0.8.0]: https://github.com/dynamic-config-rs/dynamic-config-remote/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/dynamic-config-rs/dynamic-config-remote/compare/v0.6.2...v0.7.0
 [0.6.2]: https://github.com/dynamic-config-rs/dynamic-config-remote/compare/v0.6.1...v0.6.2

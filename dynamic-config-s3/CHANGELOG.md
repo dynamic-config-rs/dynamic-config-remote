@@ -25,6 +25,24 @@ bumps the patch. A change to the minimum supported Rust version is breaking.
 
 ## [Unreleased]
 
+## [0.9.0] — 2026-08-21
+
+### Added
+
+- **This store answers the engine's watch contract.** `watch_capability()`
+  reports `Conditional` and `RemoteSource::watch` runs a `HEAD` and an
+  ETag: the object's ETag, and a `GET` only when it differs — an interval
+  used to download the whole object.
+
+  What changes for a caller is that the mechanism is reachable through the
+  *installed source* rather than through this type. A program holding a
+  `Remote` — or an agent that was handed one — used to poll whatever it had
+  been given, because the watch it wanted was on a concrete type the engine
+  had erased; `Remote::watch` now drives this one.
+
+  Nothing in this crate's own surface changed: the inherent `watch` is the
+  same function it was, and the trait method forwards to it.
+
 ## [0.8.0] — 2026-08-19
 
 ## [0.7.0] — 2026-08-18
@@ -189,7 +207,8 @@ Initial release.
 - Credentials from the AWS chain; `from_client` for a client the program
   already has; the endpoint named in every error.
 
-[Unreleased]: https://github.com/dynamic-config-rs/dynamic-config-remote/compare/v0.8.0...HEAD
+[Unreleased]: https://github.com/dynamic-config-rs/dynamic-config-remote/compare/v0.9.0...HEAD
+[0.9.0]: https://github.com/dynamic-config-rs/dynamic-config-remote/compare/v0.8.0...v0.9.0
 [0.8.0]: https://github.com/dynamic-config-rs/dynamic-config-remote/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/dynamic-config-rs/dynamic-config-remote/compare/v0.6.2...v0.7.0
 [0.6.2]: https://github.com/dynamic-config-rs/dynamic-config-remote/compare/v0.6.1...v0.6.2

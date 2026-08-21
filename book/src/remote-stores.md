@@ -4,19 +4,45 @@ Configuration served from somewhere other than this machine — etcd, Consul,
 NATS, Vault — arrives as a document and merges like a file, above the files and
 below the environment.
 
-| Crate | Store | Trait | Reads | Watches by | Authenticates with |
-|---|---|---|---|---|---|
-| [`dynamic-config-etcd`](https://github.com/dynamic-config-rs/dynamic-config-remote/tree/main/dynamic-config-etcd) | etcd v3 | async | one key, several keys, or a range — a whole document | a watch stream | user/password, TLS |
-| [`dynamic-config-consul`](https://github.com/dynamic-config-rs/dynamic-config-remote/tree/main/dynamic-config-consul) | Consul KV | blocking | one key, several keys, or a subtree — a whole document | a blocking query | ACL token, Kubernetes, JWT/OIDC |
-| [`dynamic-config-nats`](https://github.com/dynamic-config-rs/dynamic-config-remote/tree/main/dynamic-config-nats) | NATS JetStream KV | async | one key or several keys — a whole document | a KV change stream | token, user/password, NKey, JWT, creds |
-| [`dynamic-config-redis`](https://github.com/dynamic-config-rs/dynamic-config-remote/tree/main/dynamic-config-redis) | Redis | blocking | one key, several keys, or a prefix — a whole document | keyspace notifications | in the URL, TLS |
-| [`dynamic-config-vault`](https://github.com/dynamic-config-rs/dynamic-config-remote/tree/main/dynamic-config-vault) | Vault KV v2 | blocking | one path or several — a map of fields | polling the version | token, AppRole, Kubernetes, JWT/OIDC, userpass, LDAP, cert |
-| [`dynamic-config-s3`](https://github.com/dynamic-config-rs/dynamic-config-remote/tree/main/dynamic-config-s3) | S3, and anything speaking it | async | one object, several objects, or a prefix — a whole document | polling the ETag | the AWS credential chain |
-| [`dynamic-config-firestore`](https://github.com/dynamic-config-rs/dynamic-config-remote/tree/main/dynamic-config-firestore) | Firestore | blocking | one document or several — a map of fields | polling `updateTime` | workload identity, an access token |
-| [`dynamic-config-git`](https://github.com/dynamic-config-rs/dynamic-config-remote/tree/main/dynamic-config-git) | any git host | blocking | one file, several, or a directory — out of one commit | polling the ref advertisement | HTTPS token, SSH agent or key, anonymous |
+| Crate | Store | Trait | Reads | Watch | Watches by | Authenticates with |
+|---|---|---|---|---|---|---|
+| [`dynamic-config-etcd`](https://github.com/dynamic-config-rs/dynamic-config-remote/tree/main/dynamic-config-etcd) | etcd v3 | async | one key, several keys, or a range — a whole document | **Native** | a watch stream | user/password, TLS |
+| [`dynamic-config-consul`](https://github.com/dynamic-config-rs/dynamic-config-remote/tree/main/dynamic-config-consul) | Consul KV | blocking | one key, several keys, or a subtree — a whole document | **Native** | a blocking query | ACL token, Kubernetes, JWT/OIDC |
+| [`dynamic-config-nats`](https://github.com/dynamic-config-rs/dynamic-config-remote/tree/main/dynamic-config-nats) | NATS JetStream KV | async | one key or several keys — a whole document | **Native** | a KV change stream | token, user/password, NKey, JWT, creds |
+| [`dynamic-config-redis`](https://github.com/dynamic-config-rs/dynamic-config-remote/tree/main/dynamic-config-redis) | Redis | blocking | one key, several keys, or a prefix — a whole document | **Native** | keyspace notifications | in the URL, TLS |
+| [`dynamic-config-vault`](https://github.com/dynamic-config-rs/dynamic-config-remote/tree/main/dynamic-config-vault) | Vault KV v2 | blocking | one path or several — a map of fields | Conditional | polling the version | token, AppRole, Kubernetes, JWT/OIDC, userpass, LDAP, cert |
+| [`dynamic-config-s3`](https://github.com/dynamic-config-rs/dynamic-config-remote/tree/main/dynamic-config-s3) | S3, and anything speaking it | async | one object, several objects, or a prefix — a whole document | Conditional | polling the ETag | the AWS credential chain |
+| [`dynamic-config-firestore`](https://github.com/dynamic-config-rs/dynamic-config-remote/tree/main/dynamic-config-firestore) | Firestore | blocking | one document or several — a map of fields | Conditional | polling `updateTime` | workload identity, an access token |
+| [`dynamic-config-git`](https://github.com/dynamic-config-rs/dynamic-config-remote/tree/main/dynamic-config-git) | any git host | blocking | one file, several, or a directory — out of one commit | Conditional | polling the ref advertisement | HTTPS token, SSH agent or key, anonymous |
+| [`dynamic-config-server`](https://github.com/dynamic-config-rs/dynamic-config-remote/tree/main/dynamic-config-server) | a config server of your own | blocking | one application-and-profile — a whole document | **Native** | a change stream | bearer token, mTLS |
 
 Each has its own README with the whole story, and an example that runs against a
 real server in a container.
+
+**What the watch column means.** A store says how it learns that its
+document changed, and a caller reads it to know what a watch is going to
+cost:
+
+- **Native** — the store pushes. A change arrives as it happens, and the
+  interval a watch is given becomes a *resync*: the failure mode of a stream
+  is silence, and a subscription the broker forgot looks exactly like a
+  store where nothing has changed.
+
+  **What a Native store does with that interval is its own.** Consul, etcd,
+  NATS and Redis hold a connection open and leave the resync to the engine;
+  the config server's client spends it as the pace it *reconnects* at, since
+  its stream ends on every rolling restart of the server. Both are in the
+  crate's own `watch` documentation, and neither changes what a caller
+  writes.
+- **Conditional** — the store answers "has it changed?" without sending the
+  document: a version counter, an ETag, a ref advertisement, an
+  `updateTime`. A poll costs a round trip and almost no bytes.
+
+There is a third, `Interval`, for a store with neither — no store here is
+one, and it is what a store of your own gets until it says otherwise.
+`Remote::watch` drives whichever the installed store reports, so a program
+that swaps Vault for etcd changes one line and gets a push instead of a
+poll.
 
 Each is a separate crate so that reaching for one store does not put the
 others' dependency trees — a gRPC stack, a streaming client, the AWS SDK,

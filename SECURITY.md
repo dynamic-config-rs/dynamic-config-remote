@@ -68,8 +68,8 @@ with your privileges.
 
 | Version | Supported |
 |---|---|
-| 0.8.x | ✅ the latest patch |
-| ≤ 0.7 | — end of life |
+| 0.9.x | ✅ the latest patch |
+| ≤ 0.8 | — end of life |
 
 Security fixes land on the **latest patch of the line above** and
 nothing is backported before 1.0: when a release ships, every prior
@@ -117,8 +117,9 @@ machine or in CI still matters.
 
 ## Dependencies
 
-The core crate's non-optional dependency list is deliberately short — `figment`,
-`serde`, `arc-swap` — and every network client, format parser and crypto stack
+The core crate's non-optional dependency list is deliberately short —
+`serde` and `arc-swap`, plus the default resolution backend, which
+`--no-default-features` removes — and every network client, format parser and crypto stack
 is behind a feature or in a companion crate, so a build carries only what it
 asked for. A `dynamic-config` with default features pulls in no cryptography, no
 HTTP client and no runtime.

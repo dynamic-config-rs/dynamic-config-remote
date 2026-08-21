@@ -69,3 +69,41 @@ if matched != expected:
 
 print(f"synced {matched} README(s) to {version}")
 PY
+
+# And the security policy's supported-versions table, whose top row must
+# name the line being released — a `security.yml` job fails the build when
+# it does not, and it has drifted before (0.0.x while 0.7 shipped). The
+# release knows the number; nobody should have to remember it.
+python3 - "$version" <<'POLICY'
+import pathlib
+import re
+import sys
+
+version = sys.argv[1]
+line = ".".join(version.split(".")[:2])          # 0.9.0 -> 0.9
+
+policy = pathlib.Path("SECURITY.md")
+text = policy.read_text()
+
+supported = re.compile(r"^\| (\d+\.\d+)\.x \|", re.MULTILINE)
+retired = re.compile(r"^\| ≤ (\d+\.\d+) \|", re.MULTILINE)
+
+current = supported.search(text)
+if current is None:
+    sys.exit("SECURITY.md has no `| x.y.x |` supported row — the table changed shape")
+
+if current.group(1) == line:
+    print(f"SECURITY.md already names {line}.x")
+    raise SystemExit(0)
+
+# The line that was supported becomes the newest one that is not.
+text = supported.sub(f"| {line}.x |", text, count=1)
+
+if retired.search(text) is None:
+    sys.exit("SECURITY.md has no `| ≤ x.y |` end-of-life row — the table changed shape")
+
+text = retired.sub(f"| ≤ {current.group(1)} |", text, count=1)
+policy.write_text(text)
+
+print(f"SECURITY.md now names {line}.x, with ≤ {current.group(1)} retired")
+POLICY

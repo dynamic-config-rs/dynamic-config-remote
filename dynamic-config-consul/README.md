@@ -4,8 +4,8 @@ Read [`dynamic-config`] configuration from Consul's key/value store.
 
 ```toml
 [dependencies]
-dynamic-config = "0.8.0"
-dynamic-config-consul = "0.8.0"
+dynamic-config = "0.9.0"
+dynamic-config-consul = "0.9.0"
 ```
 
 ```rust
@@ -125,6 +125,12 @@ An HTTP client supplied through `with_agent` brings its own timeout, which
 applies instead.
 
 ## Watching
+
+Reported to the engine as **`WatchCapability::Native`**, so a caller
+driving this store through `Remote::watch` gets the blocking query rather
+than a poll — and gets a periodic re-read on top of it, because a query
+answering an index that will never move again looks exactly like a key
+that has not changed.
 
 Consul cannot push, but it can hold a request open until something changes — a
 *blocking query*. `watch` is that loop, and it is genuinely change-driven rather

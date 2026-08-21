@@ -5,8 +5,8 @@ that speaks its API.
 
 ```toml
 [dependencies]
-dynamic-config = { version = "0.8.0", features = ["async"] }
-dynamic-config-s3 = "0.8.0"
+dynamic-config = { version = "0.9.0", features = ["async"] }
+dynamic-config-s3 = "0.9.0"
 ```
 
 ```rust
@@ -155,6 +155,11 @@ additive: nothing that worked before starts failing, and a fetch that used to
 hang now stops.
 
 ## Watching
+
+Reported to the engine as **`WatchCapability::Conditional`**: a `HEAD` and
+an ETag comparison, so a poll costs a header rather than the object.
+Bucket notifications would be native, and they are cloud plumbing rather
+than something a client can turn on for itself.
 
 S3 cannot say when an object changes without a notification pipeline — SNS, SQS,
 EventBridge — and that is a deployment's decision rather than a library's. So

@@ -174,7 +174,9 @@ use std::pin::Pin;
 use std::time::Duration;
 
 use aws_sdk_s3::config::timeout::TimeoutConfig;
-use dynamic_config::{AsyncRemoteSource, Error, Fetched, Format, RemoteSink, Watching};
+use dynamic_config::{
+    AsyncRemoteSource, Error, Fetched, Format, RemoteSink, WatchCapability, Watching,
+};
 use dynamic_config_store_core::attempts::Attempts;
 use dynamic_config_store_core::documents::{self, Overlap, MOST_KEYS};
 use dynamic_config_store_core::guarded;
@@ -1002,6 +1004,24 @@ impl AsyncRemoteSource for S3 {
             Some(endpoint) => format!("s3 {endpoint} {}/{}", self.bucket, self.keys.describe()),
             None => format!("s3 {}/{}", self.bucket, self.keys.describe()),
         }
+    }
+
+    /// Conditional: a `HEAD` answers with an ETag, so asking what changed
+    /// costs a header rather than the object.
+    ///
+    /// Bucket notifications would be native, and they are cloud plumbing
+    /// rather than something a client can turn on for itself.
+    fn watch_capability(&self) -> WatchCapability {
+        WatchCapability::Conditional
+    }
+
+    fn watch<'a>(
+        &'a self,
+        watching: &'a Watching,
+        interval: Duration,
+        on_change: &'a mut (dyn FnMut(Fetched) -> Result<(), Error> + Send),
+    ) -> Pin<Box<dyn Future<Output = Result<(), Error>> + Send + 'a>> {
+        Box::pin(async move { S3::watch(self, watching, interval, on_change).await })
     }
 }
 

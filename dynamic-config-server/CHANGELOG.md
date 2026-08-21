@@ -30,6 +30,35 @@ untouched.
 
 ## [Unreleased]
 
+## [0.9.0] — 2026-08-21
+
+### Added
+
+- **The client subscribes.** `ConfigServer::watch` follows
+  `GET /{application}/{profile}/stream`: connect, read events, re-fetch
+  when the generation moves, reconnect from the `Last-Event-ID` the
+  server left off at. The server has served that stream since 0.7 and no
+  client followed it, which made the endpoint something you had to write
+  a loop for. Reported as `WatchCapability::Native`, so a caller driving
+  it through `Remote::watch` gets a push rather than a poll without
+  arranging anything.
+
+  It keeps the same contract the eight stores keep: the current value is
+  not delivered at startup, a document that has not changed is not
+  delivered twice, a panicking callback ends the watch with an error
+  rather than taking the thread, and transport failures are waited out.
+  What is *not* waited out is an answer that will not change by being
+  asked again — a URL this crate cannot parse, a TLS configuration it
+  cannot build, or a 404, which is what a deployment with
+  `max_stream_connections = 0` serves.
+
+  `interval` means the reconnect pace here rather than a poll: the
+  stream pushes, and this is how long to wait before trying again when
+  it ends. The waits are spread and grow after a failure.
+
+  `examples/server_watching.rs` runs it against the compose pair, beside
+  the `served` example's poll.
+
 ## [0.8.0] — 2026-08-19
 
 ## [0.7.0] — 2026-08-18
@@ -335,7 +364,8 @@ untouched.
   revoke the token.** The reasoning is in the book's threat model, under
   *Not revocation*.
 
-[Unreleased]: https://github.com/dynamic-config-rs/dynamic-config-remote/compare/v0.8.0...HEAD
+[Unreleased]: https://github.com/dynamic-config-rs/dynamic-config-remote/compare/v0.9.0...HEAD
+[0.9.0]: https://github.com/dynamic-config-rs/dynamic-config-remote/compare/v0.8.0...v0.9.0
 [0.8.0]: https://github.com/dynamic-config-rs/dynamic-config-remote/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/dynamic-config-rs/dynamic-config-remote/compare/v0.6.2...v0.7.0
 [0.6.2]: https://github.com/dynamic-config-rs/dynamic-config-remote/compare/v0.6.1...v0.6.2

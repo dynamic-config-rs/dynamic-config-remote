@@ -192,3 +192,188 @@ async fn a_failure_never_carries_the_token() {
 
     assert!(!rendered.contains("hunter2"), "{rendered}");
 }
+
+// ---------------------------------------------------------------------------
+// Watching
+// ---------------------------------------------------------------------------
+
+/// The stream, end to end: an edit on disk reaches a watching client.
+///
+/// The whole chain in one test, because every link of it is where this could
+/// silently do nothing — the server notices the file, installs a generation,
+/// pushes an event, the client re-fetches, and the document differs.
+#[tokio::test]
+async fn an_edit_reaches_a_watching_client() {
+    let directory = tempfile::tempdir().expect("a temporary directory");
+    let file = directory.path().join("billing.toml");
+    std::fs::write(&file, "[billing]\nport = 1\n").expect("writable");
+
+    let config = ServerConfig {
+        watch_debounce_ms: 0,
+        bind: "127.0.0.1:0".to_owned(),
+        sections: vec![section("billing", "prod", file.display().to_string())],
+        clients: vec![client("billing-pod", common::BILLING_TOKEN, &["billing"])],
+        ..ServerConfig::default()
+    };
+
+    let server =
+        Arc::new(Server::start_with(&config, NoAudit).expect("the configuration is valid"));
+    let listener = tokio::net::TcpListener::bind(server.address())
+        .await
+        .expect("loopback, port zero");
+    let address = listener.local_addr().expect("a bound listener has one");
+
+    let serving = Arc::clone(&server);
+    tokio::spawn(async move {
+        let _ = axum::serve(listener, router(serving)).await;
+    });
+
+    let source = ConfigServer::new(format!("http://{address}"), "billing", "prod")
+        .with_token(common::BILLING_TOKEN)
+        .with_timeout(Duration::from_secs(5));
+
+    let handle = dynamic_config::RemoteWatch::new();
+    let watching = handle.watching();
+    let seen = Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+
+    let watcher = tokio::task::spawn_blocking({
+        let seen = Arc::clone(&seen);
+
+        move || {
+            source.watch(&watching, Duration::from_millis(200), move |document| {
+                seen.lock().unwrap().push(document.text);
+
+                Ok(())
+            })
+        }
+    });
+
+    // **The current document is not delivered at startup**, which is the
+    // contract every source in this family keeps — the server's opening
+    // event says where the document stands, and where it stands is not a
+    // change. Waited on rather than asserted immediately, so a delivery
+    // that arrives late still fails the assertion below rather than
+    // slipping past it.
+    tokio::time::sleep(Duration::from_millis(300)).await;
+
+    assert!(
+        seen.lock().unwrap().is_empty(),
+        "the subscription delivered the current document at startup: {:?}",
+        seen.lock().unwrap()
+    );
+
+    std::fs::write(&file, "[billing]\nport = 2\n").expect("writable");
+
+    // The reload a deployment gets from the server's own file watcher, done
+    // by hand: this test is about the client following the stream, not about
+    // how the server came to install something.
+    server
+        .section("billing", "prod")
+        .expect("the section is served")
+        .reload()
+        .expect("the edited file loads");
+
+    let mut arrived = false;
+
+    for _ in 0..100 {
+        if seen.lock().unwrap().iter().any(|text| text.contains('2')) {
+            arrived = true;
+            break;
+        }
+
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+
+    handle.stop();
+    let _ = watcher.await;
+
+    let seen = seen.lock().unwrap().clone();
+
+    assert!(arrived, "the edit never reached the client: {seen:?}");
+    assert_eq!(
+        seen.len(),
+        1,
+        "the edit is the only delivery: the opening event is where the \
+         document stands, not that it moved: {seen:?}"
+    );
+}
+
+/// **A callback that panics ends the watch, and does not take the thread.**
+///
+/// The eight store crates all deliver through
+/// `dynamic_config_store_core::guarded` for this reason, and this client
+/// called the callback directly: a panic unwound out of `watch`, through
+/// `block_on`, and killed the caller's thread — with the `RemoteWatch`
+/// handle still looking alive to everyone holding one.
+#[tokio::test]
+async fn a_panicking_callback_ends_the_watch_rather_than_the_thread() {
+    let directory = tempfile::tempdir().expect("a temporary directory");
+    let file = directory.path().join("billing.toml");
+    std::fs::write(&file, "[billing]\nport = 1\n").expect("writable");
+
+    let config = ServerConfig {
+        watch_debounce_ms: 0,
+        bind: "127.0.0.1:0".to_owned(),
+        sections: vec![section("billing", "prod", file.display().to_string())],
+        clients: vec![client("billing-pod", common::BILLING_TOKEN, &["billing"])],
+        ..ServerConfig::default()
+    };
+
+    let server =
+        Arc::new(Server::start_with(&config, NoAudit).expect("the configuration is valid"));
+    let listener = tokio::net::TcpListener::bind(server.address())
+        .await
+        .expect("loopback, port zero");
+    let address = listener.local_addr().expect("a bound listener has one");
+
+    let serving = Arc::clone(&server);
+    tokio::spawn(async move {
+        let _ = axum::serve(listener, router(serving)).await;
+    });
+
+    let source = ConfigServer::new(format!("http://{address}"), "billing", "prod")
+        .with_token(common::BILLING_TOKEN)
+        .with_timeout(Duration::from_secs(5));
+
+    let handle = dynamic_config::RemoteWatch::new();
+    let watching = handle.watching();
+
+    let watcher = tokio::task::spawn_blocking(move || {
+        source.watch(&watching, Duration::from_millis(200), |_document| {
+            panic!("a callback somebody else wrote")
+        })
+    });
+
+    // An install, so there is something to deliver into the panic.
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    std::fs::write(&file, "[billing]\nport = 2\n").expect("writable");
+    server
+        .section("billing", "prod")
+        .expect("the section is served")
+        .reload()
+        .expect("the edited file loads");
+
+    let ended = tokio::time::timeout(Duration::from_secs(10), watcher)
+        .await
+        .expect("the watch ends rather than hanging")
+        .expect("the thread survived the panic");
+
+    let error = ended.expect_err("a panicking callback is an error, not a quiet stop");
+
+    assert!(
+        error.to_string().contains("panicked"),
+        "the error says what happened: {error}"
+    );
+
+    handle.stop();
+}
+
+/// The capability a client reports is what an agent plans around.
+#[test]
+fn the_client_says_it_is_native() {
+    use dynamic_config::WatchCapability;
+
+    let source = ConfigServer::new("http://localhost:1", "billing", "prod");
+
+    assert_eq!(source.watch_capability(), WatchCapability::Native);
+}

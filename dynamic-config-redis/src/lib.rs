@@ -197,7 +197,7 @@
 use std::sync::Mutex;
 use std::time::Duration;
 
-use dynamic_config::{Error, Fetched, Format, RemoteSink, RemoteSource, Watching};
+use dynamic_config::{Error, Fetched, Format, RemoteSink, RemoteSource, WatchCapability, Watching};
 use dynamic_config_store_core::attempts::Attempts;
 use dynamic_config_store_core::documents::{self, Overlap};
 use dynamic_config_store_core::{guarded, LoneAuthority};
@@ -1103,6 +1103,25 @@ impl RemoteSource for Redis {
 
     fn describe(&self) -> String {
         format!("redis {} {}", self.described, self.keys.describe())
+    }
+
+    /// Native: keyspace notifications arrive over a subscription.
+    fn watch_capability(&self) -> WatchCapability {
+        WatchCapability::Native
+    }
+
+    /// The subscription, through the trait.
+    ///
+    /// `interval` is the caller's resync rather than this loop's: keyspace
+    /// notifications are fire-and-forget, so a missed one is invisible from
+    /// in here.
+    fn watch(
+        &self,
+        watching: &Watching,
+        _interval: Duration,
+        on_change: &mut dyn FnMut(Fetched) -> Result<(), Error>,
+    ) -> Result<(), Error> {
+        Redis::watch(self, watching, on_change)
     }
 }
 

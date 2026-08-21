@@ -167,7 +167,7 @@
 
 use std::time::Duration;
 
-use dynamic_config::{Error, Fetched, Format, RemoteSink, RemoteSource, Watching};
+use dynamic_config::{Error, Fetched, Format, RemoteSink, RemoteSource, WatchCapability, Watching};
 use dynamic_config_store_core::attempts::Attempts;
 use dynamic_config_store_core::credential::Issued;
 use dynamic_config_store_core::documents::{self, Overlap};
@@ -1110,6 +1110,21 @@ impl RemoteSource for Vault {
             self.mount,
             self.keys.describe()
         )
+    }
+
+    /// Conditional: the KV metadata endpoint answers with a version counter,
+    /// so asking costs a small JSON body rather than the secret itself.
+    fn watch_capability(&self) -> WatchCapability {
+        WatchCapability::Conditional
+    }
+
+    fn watch(
+        &self,
+        watching: &Watching,
+        interval: Duration,
+        on_change: &mut dyn FnMut(Fetched) -> Result<(), Error>,
+    ) -> Result<(), Error> {
+        Vault::watch(self, watching, interval, on_change)
     }
 }
 

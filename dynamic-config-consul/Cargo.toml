@@ -21,7 +21,7 @@ exclude.workspace = true
 dynamic-config = { workspace = true }
 dynamic-config-store-core = { workspace = true }
 ureq = { version = "3.0.12", default-features = false, features = ["rustls", "json"] }
-serde_json = "1.0.127"
+serde_json = "1.0.149"
 base64 = "0.23"
 
 [dev-dependencies]
@@ -33,7 +33,7 @@ testcontainers-modules = { version = "0.15", features = ["consul"] }
 # so it is in no build a user of this crate produces.
 rcgen = "0.14"
 
-serde = { version = "1.0.221", features = ["derive"] }
+serde = { version = "1.0.228", features = ["derive"] }
 dynamic-config = { workspace = true, features = ["json"] }
 
 [package.metadata.docs.rs]

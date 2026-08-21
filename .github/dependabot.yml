@@ -37,3 +37,17 @@ updates:
     groups:
       actions:
         patterns: ["*"]
+
+  # The example compose image's bases, by digest.
+  #
+  # Pinned in the Dockerfile and moved here: a digest with nobody bumping
+  # it is an image that stops receiving security updates, and this example
+  # is the one thing in the repository somebody copies into a deployment.
+  - package-ecosystem: docker
+    directory: /examples/compose
+    schedule:
+      interval: weekly
+      day: monday
+    groups:
+      images:
+        patterns: ["*"]

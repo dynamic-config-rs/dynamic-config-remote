@@ -6,8 +6,8 @@ set of them read out of one commit.
 
 ```toml
 [dependencies]
-dynamic-config = "0.8.0"
-dynamic-config-git = "0.8.0"
+dynamic-config = "0.9.0"
+dynamic-config-git = "0.9.0"
 ```
 
 ```rust
@@ -293,6 +293,10 @@ Nothing is ever checked out, so no name in the tree can name a place outside the
 working directory in the first place.
 
 ## Watching
+
+Reported to the engine as **`WatchCapability::Conditional`**: the ref
+advertisement is one handshake, and objects are transferred only when the
+ref actually moved.
 
 git has no watch, so `watch` polls — and says so. Each tick is one ref
 advertisement; only a ref that moved costs a transfer. The push half needs
