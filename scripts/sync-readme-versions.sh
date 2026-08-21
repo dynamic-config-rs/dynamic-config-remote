@@ -85,8 +85,11 @@ line = ".".join(version.split(".")[:2])          # 0.9.0 -> 0.9
 policy = pathlib.Path("SECURITY.md")
 text = policy.read_text()
 
-supported = re.compile(r"^\| (\d+\.\d+)\.x \|", re.MULTILINE)
-retired = re.compile(r"^\| ≤ (\d+\.\d+) \|", re.MULTILINE)
+# The row is `| 0.9.x |` in one repository and
+# `| 0.3.x (all five crates) |` in another: what follows the version is
+# that repository's own wording, and it is kept rather than flattened.
+supported = re.compile(r"^\| (\d+\.\d+)\.x([^|]*)\|", re.MULTILINE)
+retired = re.compile(r"^\| ≤ (\d+\.\d+)([^|]*)\|", re.MULTILINE)
 
 current = supported.search(text)
 if current is None:
@@ -96,13 +99,15 @@ if current.group(1) == line:
     print(f"SECURITY.md already names {line}.x")
     raise SystemExit(0)
 
-# The line that was supported becomes the newest one that is not.
-text = supported.sub(f"| {line}.x |", text, count=1)
+# The line that was supported becomes the newest one that is not, each
+# keeping the words it was written with.
+text = supported.sub(f"| {line}.x{current.group(2)}|", text, count=1)
 
-if retired.search(text) is None:
+end_of_life = retired.search(text)
+if end_of_life is None:
     sys.exit("SECURITY.md has no `| ≤ x.y |` end-of-life row — the table changed shape")
 
-text = retired.sub(f"| ≤ {current.group(1)} |", text, count=1)
+text = retired.sub(f"| ≤ {current.group(1)}{end_of_life.group(2)}|", text, count=1)
 policy.write_text(text)
 
 print(f"SECURITY.md now names {line}.x, with ≤ {current.group(1)} retired")
