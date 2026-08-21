@@ -43,8 +43,9 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use dynamic_config::{Error, Fetched, Format, Pace, RemoteSource, WatchCapability, Watching};
+use dynamic_config_store_core::attempts::Attempts;
 use dynamic_config_store_core::tls::TlsConfig;
-use dynamic_config_store_core::{redacted, LoneAuthority};
+use dynamic_config_store_core::{guarded, redacted, LoneAuthority};
 
 use http::{Budget, Connection, Endpoint, Events, Get};
 
@@ -76,6 +77,14 @@ pub struct ConfigServer {
     /// configuration reads files, and a fetch path is not where that belongs.
     client: std::sync::OnceLock<Arc<rustls::ClientConfig>>,
     described: String,
+    /// Where a watch reports an attempt that came back with nothing.
+    ///
+    /// Nobody, unless [`reporting_to`](Self::reporting_to) says otherwise —
+    /// the same door the eight store crates carry, and for the same reason:
+    /// a watch swallows transport failures by design, so without this the
+    /// only thing that knew the server had been unreachable for an hour was
+    /// the loop, and `status().reachable()` went on answering `true`.
+    attempts: Attempts,
 }
 
 impl ConfigServer {
@@ -117,7 +126,29 @@ impl ConfigServer {
             timeout: DEFAULT_TIMEOUT,
             client: std::sync::OnceLock::new(),
             described,
+            attempts: Attempts::default(),
         }
+    }
+
+    /// Report failed attempts to `sink`, so an outage is visible.
+    ///
+    /// A watch swallows transport failures on purpose — outliving one is
+    /// what a watch is for — and the cost of that is a store that has been
+    /// unreachable for an hour while `status().reachable()` says otherwise.
+    /// This is the door the eight store crates carry, and the same
+    /// discipline: take the sink where the watch is wired, once, because a
+    /// sink captures the generation of the source installed at that moment
+    /// and that is what fences a winding-down loop's failures away from its
+    /// replacement.
+    ///
+    /// **A failure moves the failure streak and nothing else.** The fetch
+    /// count and the clock are left alone, so a dashboard keeps ageing
+    /// `last_fetch` while `up` goes to zero — the pair an alert wants. It
+    /// changes nothing about what [`watch`](Self::watch) returns.
+    #[must_use]
+    pub fn reporting_to(mut self, sink: dynamic_config::RemoteSink) -> Self {
+        self.attempts = Attempts::to(sink);
+        self
     }
 
     /// The bearer token this server issued for these applications.
@@ -264,24 +295,17 @@ impl ConfigServer {
             Connection::open(&endpoint, self.tls_client(secure)?, budget, &self.described).await?;
 
         // The file wins, and is read per fetch: a projected token that
-        // rotated between two fetches must present its NEW self.
-        let fresh = match &self.token_file {
-            None => None,
-            Some(file) => Some(std::fs::read_to_string(file).map_err(|error| {
-                Error::auth(format!(
-                    "{}: reading the bearer token file: {error}",
-                    self.described
-                ))
-            })?),
-        };
-        let bearer = fresh.as_deref().map(str::trim).or(self.token.as_deref());
+        // rotated between two fetches must present its NEW self. One
+        // reader, shared with the watch — two copies of "which credential
+        // do we present" is one more than a credential should have.
+        let bearer = self.bearer()?;
 
         let response = connection
             .get(
                 &endpoint,
                 Get {
                     path: &path,
-                    token: bearer,
+                    token: bearer.as_deref(),
                     accept: "application/json",
                     resume: None,
                 },
@@ -370,6 +394,15 @@ impl ConfigServer {
                 ))
             })?;
 
+        // Settled once, before the loop, because neither can come right by
+        // being retried: a URL this crate cannot parse and a TLS
+        // configuration it cannot build are the caller's to fix, and a loop
+        // that swallowed them reconnected forever, delivered nothing and
+        // said nothing. The eight stores validate what is deterministic up
+        // front for the same reason.
+        let endpoint = Endpoint::parse(&self.url, &self.described)?;
+        self.tls_client(endpoint.secure)?;
+
         runtime.block_on(async {
             let mut pace = Pace::new(interval);
             let mut resume: Option<String> = None;
@@ -410,7 +443,8 @@ impl ConfigServer {
     where
         F: FnMut(Fetched) -> Result<(), Error>,
     {
-        let endpoint = Endpoint::parse(&self.url, &self.described).map_err(Ended::store)?;
+        let endpoint = Endpoint::parse(&self.url, &self.described)
+            .map_err(|error| self.disconnected(&error))?;
         let path = endpoint.path(&format!("/{}/{}/stream", self.application, self.profile));
 
         // The budget covers getting the stream open — connect, handshake,
@@ -418,12 +452,14 @@ impl ConfigServer {
         // be a deadline on the configuration not changing.
         let budget = Budget::starting(self.timeout);
         let secure = endpoint.secure;
-        let tls = self.tls_client(secure).map_err(Ended::store)?;
+        let tls = self
+            .tls_client(secure)
+            .map_err(|error| self.disconnected(&error))?;
         let mut connection = Connection::open(&endpoint, tls, budget, &self.described)
             .await
-            .map_err(Ended::store)?;
+            .map_err(|error| self.disconnected(&error))?;
 
-        let bearer = self.bearer().map_err(Ended::store)?;
+        let bearer = self.bearer().map_err(|error| self.disconnected(&error))?;
         let response = connection
             .get(
                 &endpoint,
@@ -437,22 +473,39 @@ impl ConfigServer {
                 &self.described,
             )
             .await
-            .map_err(Ended::store)?;
+            .map_err(|error| self.disconnected(&error))?;
 
         if !response.status().is_success() {
-            return Err(Ended::store(http::refused(
-                response.status(),
-                &self.described,
-            )));
+            let status = response.status();
+            let refusal = http::refused(status, &self.described);
+
+            // **A 404 is an answer, not an outage.** The stream path is
+            // absent when a deployment sets `max_stream_connections = 0`,
+            // and when a URL names a prefix this server does not mount —
+            // neither comes right by reconnecting, and a loop that retried
+            // them forever was a watch that delivered nothing and said
+            // nothing. Everything else is waited out, credentials included:
+            // a token file rotating between two connections looks exactly
+            // like a token that is wrong.
+            if status == 404 {
+                return Err(Ended::Refused(refusal));
+            }
+
+            return Err(self.disconnected(&refusal));
         }
 
         let mut events = Events::new(response);
 
+        // Whether the *first* event of this connection is the server saying
+        // where the document stands rather than that it moved. It is,
+        // exactly when this subscription sent no `Last-Event-ID`.
+        let mut opening = resume.is_none();
+
         while watching.keep_going() {
             let next = events
-                .next(Self::IDLE, &self.described)
+                .next(watching, Self::IDLE, &self.described)
                 .await
-                .map_err(Ended::store)?;
+                .map_err(|error| self.disconnected(&error))?;
 
             let Some(event) = next else {
                 // The server closed it. Ordinary — a rolling restart does
@@ -460,8 +513,13 @@ impl ConfigServer {
                 return Ok(());
             };
 
-            if let Some(id) = event.id {
-                *resume = Some(id);
+            // A keep-alive says the connection is there and nothing else.
+            // Round the loop rather than through the fetch: re-reading the
+            // whole document every fifteen seconds of quiet is the poll this
+            // client exists to replace, and coming back here is also what
+            // notices a watch that has been stopped.
+            if !event.carried {
+                continue;
             }
 
             // The event says *something landed*; the document is fetched
@@ -470,15 +528,57 @@ impl ConfigServer {
             // an install is an install.
             let _ = event.data;
 
-            let fetched = self.read().await.map_err(Ended::store)?;
+            // **The opening event is not a change.** A first subscription
+            // sends no `Last-Event-ID`, so the server opens with where the
+            // document stands — which is the current value, and
+            // "the current value is not delivered at startup" is the
+            // contract all nine sources keep. Its id is still worth having:
+            // a reconnect resumes from it.
+            if opening {
+                opening = false;
+                *resume = event.id.or_else(|| resume.take());
+
+                continue;
+            }
+
+            let fetched = self
+                .read()
+                .await
+                .map_err(|error| self.disconnected(&error))?;
 
             if last.as_ref() != Some(&fetched) {
                 *last = Some(fetched.clone());
-                on_change(fetched).map_err(Ended::Refused)?;
+
+                // Through `guarded`, as every other store delivers: a
+                // callback that panics ends the watch with an error rather
+                // than unwinding through this loop and killing the caller's
+                // thread with the `RemoteWatch` handle still looking alive.
+                guarded(on_change, fetched, &self.described).map_err(Ended::Refused)?;
+            }
+
+            // **Advanced last, and only on the way out.** Moving it before
+            // the fetch meant a fetch that failed still counted: the
+            // reconnect carried a `Last-Event-ID` for a generation this
+            // client never read, the server saw nothing newer, and the
+            // change was lost until the next install — the one window the
+            // module documentation says cannot exist.
+            if let Some(id) = event.id {
+                *resume = Some(id);
             }
         }
 
         Ok(())
+    }
+
+    /// An attempt that came back with nothing, reported and then forgotten.
+    ///
+    /// Reporting happens here rather than at each call site so that a
+    /// failure branch added later cannot be the one that forgets — the
+    /// same shape the eight store crates use.
+    fn disconnected(&self, error: &Error) -> Ended {
+        self.attempts.failed(error);
+
+        Ended::Disconnected
     }
 
     /// The bearer token to present, file first.
@@ -505,16 +605,11 @@ impl ConfigServer {
 /// overriding.
 enum Ended {
     /// The connection failed, or the server refused the subscription. The
-    /// error is not carried: the loop waits and tries again, and a message
-    /// per reconnect through an outage is a log nobody can read.
+    /// error is not carried past here: the loop waits and tries again, and a
+    /// message per reconnect through an outage is a log nobody can read. It
+    /// *is* reported first — see `ConfigServer::disconnected`.
     Disconnected,
     Refused(Error),
-}
-
-impl Ended {
-    fn store(_error: Error) -> Self {
-        Self::Disconnected
-    }
 }
 
 /// Sleeps for `total`, waking early once the watch is stopped.

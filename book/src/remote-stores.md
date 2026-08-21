@@ -27,6 +27,13 @@ cost:
   interval a watch is given becomes a *resync*: the failure mode of a stream
   is silence, and a subscription the broker forgot looks exactly like a
   store where nothing has changed.
+
+  **What a Native store does with that interval is its own.** Consul, etcd,
+  NATS and Redis hold a connection open and leave the resync to the engine;
+  the config server's client spends it as the pace it *reconnects* at, since
+  its stream ends on every rolling restart of the server. Both are in the
+  crate's own `watch` documentation, and neither changes what a caller
+  writes.
 - **Conditional** — the store answers "has it changed?" without sending the
   document: a version counter, an ETag, a ref advertisement, an
   `updateTime`. A poll costs a round trip and almost no bytes.

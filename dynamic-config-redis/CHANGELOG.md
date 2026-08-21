@@ -27,6 +27,22 @@ bumps the patch. A change to the minimum supported Rust version is breaking.
 
 ## [0.9.0] — 2026-08-21
 
+### Added
+
+- **This store answers the engine's watch contract.** `watch_capability()`
+  reports `Native` and `RemoteSource::watch` runs keyspace notifications:
+  the `__keyspace@` channel, which the server publishes only when it is
+  configured to — checked at startup rather than waited on.
+
+  What changes for a caller is that the mechanism is reachable through the
+  *installed source* rather than through this type. A program holding a
+  `Remote` — or an agent that was handed one — used to poll whatever it had
+  been given, because the watch it wanted was on a concrete type the engine
+  had erased; `Remote::watch` now drives this one.
+
+  Nothing in this crate's own surface changed: the inherent `watch` is the
+  same function it was, and the trait method forwards to it.
+
 ## [0.8.0] — 2026-08-19
 
 ## [0.7.0] — 2026-08-18

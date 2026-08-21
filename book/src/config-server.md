@@ -234,6 +234,23 @@ precisely so that silence means something. The reconnect waits are spread
 across a fleet and grow after a failure, so a server coming back up is not
 met by every pod at once.
 
+**What ends a watch, and what does not.** A connection that fails is waited
+out and opened again — that is what a watch is for, and a token file
+rotating between two connections looks exactly like a token that is wrong.
+Three things are not waited out, because asking again cannot change the
+answer: a URL this crate cannot parse, a TLS configuration it cannot build
+— both settled once, before the first connection — and a **404**, which is
+what a deployment with `max_stream_connections = 0` serves on this path,
+and what a URL naming a prefix this server does not mount serves too. A
+watch that reconnected forever against those would deliver nothing and say
+nothing.
+
+The current document is **not** delivered at startup. The server opens a
+first subscription with where the document stands, which is how a client
+learns its generation; where it stands is not a change, and every source in
+this family keeps that contract. A caller that wants the document first
+fetches it first — `refresh_remote()`, or the sink's own initial load.
+
 Through the engine, none of that is something a caller arranges:
 `Remote::watch` drives whichever store is installed, and this one reports
 `WatchCapability::Native`.
