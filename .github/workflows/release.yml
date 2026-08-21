@@ -75,7 +75,7 @@ jobs:
       # The version bump keeps the semver promise it makes: compared against
       # the baseline already on crates.io. Pre-1.0, a breaking change needs
       # the minor bumped — this is the check that notices when it was not.
-      - uses: taiki-e/install-action@7f4eb899022d8fe70b20c4f3de697aa85c309026 # v2
+      - uses: taiki-e/install-action@5b4d68e2e660441203ab128a23676f1e4faf1532 # v2
         with:
           tool: cargo-semver-checks
       # A crate that has never been released has no baseline to compare
