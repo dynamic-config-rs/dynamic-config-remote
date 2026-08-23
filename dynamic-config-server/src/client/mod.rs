@@ -666,6 +666,284 @@ async fn sleep_while(watching: &Watching, total: Duration) {
     }
 }
 
+impl ConfigServer {
+    /// How long a stream may be silent before it is treated as dead.
+    ///
+    /// The server sends a comment every fifteen seconds precisely so that
+    /// silence means something; three of those is a connection a proxy has
+    /// dropped without telling either end.
+    const IDLE: Duration = Duration::from_secs(50);
+
+    /// Follows the change stream, fetching whenever the generation moves.
+    ///
+    /// Blocks until `watching` is stopped, so it belongs on a thread of its
+    /// own. `interval` is the reconnect pace rather than a poll: the stream
+    /// pushes, and this is how long to wait before trying again when it
+    /// ends. The waits are spread across a fleet and grow after a failure,
+    /// so a server coming back up is not met by every pod at once.
+    ///
+    /// Each document is delivered only when it differs from the last one:
+    /// a generation moves for every install, and an install that changed
+    /// nothing this caller can see should wake nothing.
+    ///
+    /// # Errors
+    ///
+    /// If `on_change` refuses a document. A connection failing is not an
+    /// error — reconnecting through an outage is what this is for.
+    pub fn watch<F>(
+        &self,
+        watching: &Watching,
+        interval: Duration,
+        mut on_change: F,
+    ) -> Result<(), Error>
+    where
+        F: FnMut(Fetched) -> Result<(), Error>,
+    {
+        // One runtime for the whole watch, unlike `fetch`'s per-call one: a
+        // watch is a long-lived thing by definition, so the argument that
+        // makes a per-call runtime free does not apply to it.
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .map_err(|error| {
+                Error::remote(format!(
+                    "{}: no runtime for the watch: {error}",
+                    self.described
+                ))
+            })?;
+
+        // Settled once, before the loop, because neither can come right by
+        // being retried: a URL this crate cannot parse and a TLS
+        // configuration it cannot build are the caller's to fix, and a loop
+        // that swallowed them reconnected forever, delivered nothing and
+        // said nothing. The eight stores validate what is deterministic up
+        // front for the same reason.
+        let endpoint = Endpoint::parse(&self.url, &self.described)?;
+        self.tls_client(endpoint.secure)?;
+
+        runtime.block_on(async {
+            let mut pace = Pace::new(interval);
+            let mut resume: Option<String> = None;
+            let mut last: Option<Fetched> = None;
+
+            while watching.keep_going() {
+                match self
+                    .subscribed(watching, &mut resume, &mut last, &mut on_change)
+                    .await
+                {
+                    Ok(()) => pace.succeeded(),
+                    // The caller refusing a document is the one failure this
+                    // loop does not own: it is a decision, not an outage.
+                    Err(Ended::Refused(error)) => return Err(error),
+                    // Everything else is swallowed on purpose, credentials
+                    // included: a token file rotating between two
+                    // connections looks exactly like a token that is wrong,
+                    // and a watch that stopped on the first would be a pod
+                    // that never recovered from a routine rotation.
+                    Err(Ended::Disconnected) => pace.failed(),
+                }
+
+                sleep_while(watching, pace.next_wait()).await;
+            }
+
+            Ok(())
+        })
+    }
+
+    /// One connection's worth of stream, from subscribe to close.
+    async fn subscribed<F>(
+        &self,
+        watching: &Watching,
+        resume: &mut Option<String>,
+        last: &mut Option<Fetched>,
+        on_change: &mut F,
+    ) -> Result<(), Ended>
+    where
+        F: FnMut(Fetched) -> Result<(), Error>,
+    {
+        let endpoint = Endpoint::parse(&self.url, &self.described)
+            .map_err(|error| self.disconnected(&error))?;
+        let path = endpoint.path(&format!("/{}/{}/stream", self.application, self.profile));
+
+        // The budget covers getting the stream open — connect, handshake,
+        // request — and stops there. A deadline on the stream itself would
+        // be a deadline on the configuration not changing.
+        let budget = Budget::starting(self.timeout);
+        let secure = endpoint.secure;
+        let tls = self
+            .tls_client(secure)
+            .map_err(|error| self.disconnected(&error))?;
+        let mut connection = Connection::open(&endpoint, tls, budget, &self.described)
+            .await
+            .map_err(|error| self.disconnected(&error))?;
+
+        let bearer = self.bearer().map_err(|error| self.disconnected(&error))?;
+        let response = connection
+            .get(
+                &endpoint,
+                Get {
+                    path: &path,
+                    token: bearer.as_deref(),
+                    accept: "text/event-stream",
+                    resume: resume.as_deref(),
+                },
+                budget,
+                &self.described,
+            )
+            .await
+            .map_err(|error| self.disconnected(&error))?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let refusal = http::refused(status, &self.described);
+
+            // **A 404 is an answer, not an outage.** The stream path is
+            // absent when a deployment sets `max_stream_connections = 0`,
+            // and when a URL names a prefix this server does not mount —
+            // neither comes right by reconnecting, and a loop that retried
+            // them forever was a watch that delivered nothing and said
+            // nothing. Everything else is waited out, credentials included:
+            // a token file rotating between two connections looks exactly
+            // like a token that is wrong.
+            if status == 404 {
+                return Err(Ended::Refused(refusal));
+            }
+
+            return Err(self.disconnected(&refusal));
+        }
+
+        let mut events = Events::new(response);
+
+        // Whether the *first* event of this connection is the server saying
+        // where the document stands rather than that it moved. It is,
+        // exactly when this subscription sent no `Last-Event-ID`.
+        let mut opening = resume.is_none();
+
+        while watching.keep_going() {
+            let next = events
+                .next(watching, Self::IDLE, &self.described)
+                .await
+                .map_err(|error| self.disconnected(&error))?;
+
+            let Some(event) = next else {
+                // The server closed it. Ordinary — a rolling restart does
+                // exactly this — and the loop above reconnects.
+                return Ok(());
+            };
+
+            // A keep-alive says the connection is there and nothing else.
+            // Round the loop rather than through the fetch: re-reading the
+            // whole document every fifteen seconds of quiet is the poll this
+            // client exists to replace, and coming back here is also what
+            // notices a watch that has been stopped.
+            if !event.carried {
+                continue;
+            }
+
+            // The event says *something landed*; the document is fetched
+            // from the endpoint that serves documents. Reading the number
+            // out of the payload is not needed for that and is not done:
+            // an install is an install.
+            let _ = event.data;
+
+            // **The opening event is not a change.** A first subscription
+            // sends no `Last-Event-ID`, so the server opens with where the
+            // document stands — which is the current value, and
+            // "the current value is not delivered at startup" is the
+            // contract all nine sources keep. Its id is still worth having:
+            // a reconnect resumes from it.
+            if opening {
+                opening = false;
+                *resume = event.id.or_else(|| resume.take());
+
+                continue;
+            }
+
+            let fetched = self
+                .read()
+                .await
+                .map_err(|error| self.disconnected(&error))?;
+
+            if last.as_ref() != Some(&fetched) {
+                *last = Some(fetched.clone());
+
+                // Through `guarded`, as every other store delivers: a
+                // callback that panics ends the watch with an error rather
+                // than unwinding through this loop and killing the caller's
+                // thread with the `RemoteWatch` handle still looking alive.
+                guarded(on_change, fetched, &self.described).map_err(Ended::Refused)?;
+            }
+
+            // **Advanced last, and only on the way out.** Moving it before
+            // the fetch meant a fetch that failed still counted: the
+            // reconnect carried a `Last-Event-ID` for a generation this
+            // client never read, the server saw nothing newer, and the
+            // change was lost until the next install — the one window the
+            // module documentation says cannot exist.
+            if let Some(id) = event.id {
+                *resume = Some(id);
+            }
+        }
+
+        Ok(())
+    }
+
+    /// An attempt that came back with nothing, reported and then forgotten.
+    ///
+    /// Reporting happens here rather than at each call site so that a
+    /// failure branch added later cannot be the one that forgets — the
+    /// same shape the eight store crates use.
+    fn disconnected(&self, error: &Error) -> Ended {
+        self.attempts.failed(error);
+
+        Ended::Disconnected
+    }
+
+    /// The bearer token to present, file first.
+    fn bearer(&self) -> Result<Option<String>, Error> {
+        match &self.token_file {
+            Some(file) => std::fs::read_to_string(file)
+                .map(|token| Some(token.trim().to_owned()))
+                .map_err(|error| {
+                    Error::auth(format!(
+                        "{}: reading the bearer token file: {error}",
+                        self.described
+                    ))
+                }),
+            None => Ok(self.token.clone()),
+        }
+    }
+}
+
+/// Why one connection's worth of stream ended.
+///
+/// The distinction the loop above acts on, and the only one it needs: a
+/// connection that failed is waited out and tried again, and a caller that
+/// refused a document has made a decision the loop has no business
+/// overriding.
+enum Ended {
+    /// The connection failed, or the server refused the subscription. The
+    /// error is not carried past here: the loop waits and tries again, and a
+    /// message per reconnect through an outage is a log nobody can read. It
+    /// *is* reported first — see `ConfigServer::disconnected`.
+    Disconnected,
+    Refused(Error),
+}
+
+/// Sleeps for `total`, waking early once the watch is stopped.
+async fn sleep_while(watching: &Watching, total: Duration) {
+    const SLICE: Duration = Duration::from_millis(250);
+
+    let mut left = total;
+
+    while left > Duration::ZERO && watching.keep_going() {
+        let slice = left.min(SLICE);
+
+        tokio::time::sleep(slice).await;
+        left -= slice;
+    }
+}
+
 impl RemoteSource for ConfigServer {
     fn fetch(&self) -> Result<Fetched, Error> {
         // A blocking `fetch` on a client built from an async stack: one
