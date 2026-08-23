@@ -50,9 +50,11 @@
 #![deny(missing_docs)]
 
 pub mod attempts;
+pub mod concurrency;
 pub mod credential;
 pub mod documents;
 pub mod tls;
+pub mod transform;
 
 use dynamic_config::{Error, Fetched};
 

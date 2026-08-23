@@ -29,11 +29,23 @@
 //! pinned to a private CA and is not, which is worse than a program that
 //! will not start.
 //!
-//! | Store | CA from a file | CA from bytes | Client certificate |
-//! |---|---|---|---|
-//! | etcd, Consul, Vault, Firestore, Redis, git | yes | yes | yes |
-//! | NATS | yes | **no** — its client takes paths | file paths only |
-//! | S3 | yes | yes | **no** — the SDK's TLS context has no client-certificate slot |
+//! | Store | CA from a file | CA from bytes | Client certificate | Server name | Skip verification |
+//! |---|---|---|---|---|---|
+//! | Consul, Vault, Firestore | yes | yes | yes | **no** — `ureq` has no name override | yes |
+//! | config server | yes | yes | yes | yes | yes |
+//! | git | yes | yes | yes | **no** | yes |
+//! | etcd | yes | yes | yes | yes | **no** — `tonic` has no such switch |
+//! | Redis | yes | yes | yes | **no** | **no** — only under a `redis` feature this crate does not enable |
+//! | NATS | yes | **no** — its client takes paths | file paths only | **no** | **no** |
+//! | S3 | yes | yes | **no** — the SDK's TLS context has no client-certificate slot | **no** | **no** |
+//!
+//! The last two columns are not the same shape as the first three, and the
+//! difference is worth reading off the table: the stores that can express a
+//! **server name** and the stores that can express **skipping verification**
+//! are almost disjoint sets. `ureq` can turn verification off and cannot
+//! override a name; `tonic` can override a name and cannot turn verification
+//! off. Only the config server, whose client is in this workspace, does
+//! both.
 //!
 //! git is in the table but not in this crate's dependents: `dynamic-config-git`
 //! re-exports [`TlsConfig`] and speaks the same vocabulary over `https://`
@@ -43,31 +55,44 @@
 //! Each store's own documentation repeats its row, because that is where
 //! somebody reads it.
 //!
-//! # There is no `skip_verification`
+//! # The name to verify against, and the option not to
 //!
-//! Deliberately, and the reasoning is worth stating rather than leaving as
-//! an absence.
+//! Two settings sit apart from the other three, because they are about
+//! *whether* the server is authenticated rather than about which
+//! certificates take part.
 //!
-//! **It could not be uniform.** `tonic` offers no such switch, and neither
-//! does the AWS SDK's TLS context; `async-nats` reaches it only through a
-//! hand-built `rustls::ClientConfig`. A knob in this type that four of
-//! seven stores had to refuse would be a vocabulary word that mostly means
-//! "error", which is the opposite of what one vocabulary is for.
+//! [`with_server_name`](TlsConfig::with_server_name) says which name the
+//! certificate must match, when that is not the name in the address. The
+//! case it exists for is an endpoint given as an IP — a Service's cluster
+//! IP, a load balancer, a `NodePort` — against a certificate issued for a
+//! hostname. Without it, a caller in that position has no correct answer
+//! and reaches for the wrong one. **It keeps the server authenticated**:
+//! the certificate still has to chain to a trusted CA and still has to
+//! carry the name, it is just a different name than the URL's.
 //!
-//! **It answers nothing [`with_ca_certificate_file`](TlsConfig::with_ca_certificate_file)
-//! does not.** The two situations people reach for it in — a development
-//! server with a self-signed certificate, an enterprise private CA — are
-//! both a matter of trusting one more certificate, which is one line here
-//! and keeps the server authenticated. Turning verification off does not
-//! make TLS weaker in the way a checklist means; it makes it *absent*,
-//! and leaves a connection that any party on the path can read and rewrite.
+//! [`with_skip_verification`](TlsConfig::with_skip_verification) turns
+//! authentication **off**. Not weaker — off. Any party on the network path
+//! can then present any certificate, read everything sent, and rewrite
+//! everything returned; for a store, "everything returned" is the
+//! configuration and the credentials a pod is about to run on.
 //!
-//! **The escape hatch is still there for the case nobody anticipated.**
-//! `with_agent`, `with_options`, `from_client` and `with_config` all
-//! survive, and every client underneath has its own dangerous switch under
-//! its own frightening name. A caller who genuinely needs it names that
-//! API, in their own code, where a reviewer sees it — rather than reaching
-//! for a short word on a type whose other options are safe.
+//! It exists because deployments exist that cannot be fixed today and
+//! still have to run, and because the alternative to a named switch is a
+//! caller reaching into `with_agent` or `from_client` where nothing warns
+//! and nothing is reviewable. It should be reached for after
+//! [`with_ca_certificate_file`](TlsConfig::with_ca_certificate_file) has
+//! been tried, not before: trusting one more certificate is one line and
+//! keeps the server authenticated, which is what the two situations people
+//! usually want it for — a development server with a self-signed
+//! certificate, an enterprise private CA — actually need.
+//!
+//! **Neither is uniform**, which is why the table above has two more
+//! columns. A store whose client cannot express one refuses the whole
+//! configuration by name rather than ignoring it, on exactly the same rule
+//! as the other three settings: a program that believes verification is
+//! off and finds it on merely fails to connect, but a program that
+//! believes it is *on* when it is off is the failure this crate exists to
+//! prevent.
 
 use std::path::{Path, PathBuf};
 
@@ -207,12 +232,13 @@ impl std::fmt::Debug for ClientCertificate {
 /// own trust store, which is what a public certificate authority needs and
 /// what every store already did.
 ///
-/// See the [module documentation](self) for what each store can express and
-/// for why there is no way to turn verification off.
+/// See the [module documentation](self) for what each store can express.
 #[derive(Clone, Default, PartialEq, Eq)]
 pub struct TlsConfig {
     ca: Option<Pem>,
     client: Option<ClientCertificate>,
+    server_name: Option<String>,
+    skip_verification: bool,
 }
 
 impl TlsConfig {
@@ -284,6 +310,42 @@ impl TlsConfig {
         self
     }
 
+    /// Verify the certificate against this name rather than the address's.
+    ///
+    /// For an endpoint written as an IP — a Service's cluster IP, a load
+    /// balancer, a `NodePort` — against a certificate issued for a
+    /// hostname. The certificate still has to chain to a trusted authority
+    /// and still has to carry this name; only which name is checked moves.
+    ///
+    /// Refused by the stores whose clients cannot express it; see the
+    /// [module documentation](self).
+    #[must_use]
+    pub fn with_server_name(mut self, name: impl Into<String>) -> Self {
+        self.server_name = Some(name.into());
+        self
+    }
+
+    /// Do not authenticate the server at all.
+    ///
+    /// **This is not a weaker TLS; it is TLS without the part that makes it
+    /// mean anything.** Any party on the network path can present any
+    /// certificate, read what is sent, and rewrite what comes back — and
+    /// what comes back from a store is the configuration and the
+    /// credentials a process is about to run on.
+    ///
+    /// Try [`with_ca_certificate_file`](Self::with_ca_certificate_file)
+    /// first. A development server with a self-signed certificate and an
+    /// enterprise private CA are both one more certificate to trust, which
+    /// is one line and keeps the server authenticated.
+    ///
+    /// Refused by the stores whose clients cannot express it; see the
+    /// [module documentation](self).
+    #[must_use]
+    pub fn with_skip_verification(mut self, skip: bool) -> Self {
+        self.skip_verification = skip;
+        self
+    }
+
     /// Whether this asks for nothing at all.
     ///
     /// A store uses it to tell "the caller wants the platform defaults"
@@ -291,7 +353,10 @@ impl TlsConfig {
     /// leaving its client alone and building one.
     #[must_use]
     pub fn is_empty(&self) -> bool {
-        self.ca.is_none() && self.client.is_none()
+        self.ca.is_none()
+            && self.client.is_none()
+            && self.server_name.is_none()
+            && !self.skip_verification
     }
 
     /// The certificate authority to trust, if one was named.
@@ -304,6 +369,18 @@ impl TlsConfig {
     #[must_use]
     pub fn client_certificate(&self) -> Option<&ClientCertificate> {
         self.client.as_ref()
+    }
+
+    /// The name to verify against, if it is not the address's.
+    #[must_use]
+    pub fn server_name(&self) -> Option<&str> {
+        self.server_name.as_deref()
+    }
+
+    /// Whether the server is to go unauthenticated.
+    #[must_use]
+    pub const fn skips_verification(&self) -> bool {
+        self.skip_verification
     }
 
     /// The CA certificate's PEM bytes, reading the file if that is what it
@@ -350,6 +427,11 @@ impl std::fmt::Debug for TlsConfig {
         f.debug_struct("TlsConfig")
             .field("ca_certificate", &self.ca)
             .field("client_certificate", &self.client)
+            .field("server_name", &self.server_name)
+            // Printed even when false, and printed *last*: a reader
+            // scanning a log for why a connection trusted something it
+            // should not have is reading for this line.
+            .field("skip_verification", &self.skip_verification)
             .finish()
     }
 }
@@ -382,6 +464,29 @@ mod tests {
 
     fn planted_key() -> String {
         format!("-----BEGIN PRIVATE KEY-----\n{PLANTED}\n-----END PRIVATE KEY-----\n")
+    }
+
+    #[test]
+    fn an_empty_configuration_is_still_empty_with_the_two_new_settings() {
+        assert!(TlsConfig::new().is_empty());
+        assert!(!TlsConfig::new()
+            .with_server_name("vault.internal")
+            .is_empty());
+        assert!(!TlsConfig::new().with_skip_verification(true).is_empty());
+
+        // `false` asks for nothing, and a store that sees `is_empty()` is
+        // entitled to leave its client alone.
+        assert!(TlsConfig::new().with_skip_verification(false).is_empty());
+    }
+
+    /// The one field whose value a reader scans a log for.
+    #[test]
+    fn skipping_verification_is_visible_in_debug_either_way() {
+        assert!(format!("{:?}", TlsConfig::new()).contains("skip_verification: false"));
+        assert!(
+            format!("{:?}", TlsConfig::new().with_skip_verification(true))
+                .contains("skip_verification: true")
+        );
     }
 
     #[test]

@@ -31,6 +31,26 @@ pub(crate) fn agent(
 ) -> Result<ureq::Agent, Error> {
     let mut config = ureq::tls::TlsConfig::builder();
 
+    // `ureq` can turn SNI on and off and it can turn verification off, but
+    // it cannot verify against a *different* name than the URL's — there is
+    // no override to hand a name to. Refused rather than approximated:
+    // `use_sni(false)` would connect, look like it had worked, and check
+    // nothing about who answered.
+    if let Some(name) = tls.server_name() {
+        return Err(dynamic_config_store_core::tls::unsupported(
+            described,
+            &format!("verifying against the name {name:?} rather than the address's"),
+            "this client offers no name override; address the store by the              name its certificate carries, or add that name to the              certificate",
+        ));
+    }
+
+    if tls.skips_verification() {
+        // Everything else in this function is about *which* certificates
+        // take part. This is the line that decides whether any of it means
+        // anything, so it is here on its own, before them.
+        config = config.disable_verification(true);
+    }
+
     if let Some(pem) = tls.ca_certificate_pem(described)? {
         // `RootCerts::Specific` *replaces* the trust store rather than adding
         // to it, which is what pinning a private CA means: a deployment that

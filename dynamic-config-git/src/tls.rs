@@ -248,6 +248,21 @@ impl Client {
             // documentation for what making it work would actually cost.
             .redirect(reqwest::redirect::Policy::none());
 
+        if let Some(name) = tls.server_name() {
+            return Err(dynamic_config_store_core::tls::unsupported(
+                described,
+                &format!("verifying against the name {name:?} rather than the address's"),
+                "`reqwest` takes no name override; clone from the name the \
+                 certificate carries",
+            ));
+        }
+
+        if tls.skips_verification() {
+            // One line here, and the only line in this file that decides
+            // whether the rest of it means anything.
+            builder = builder.danger_accept_invalid_certs(true);
+        }
+
         if let Some(pem) = tls.ca_certificate_pem(described)? {
             // A bundle rather than one certificate: a private CA with an
             // intermediate is the ordinary enterprise shape, and a file

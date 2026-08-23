@@ -205,7 +205,7 @@ use std::path::PathBuf;
 use std::sync::Mutex;
 use std::time::Duration;
 
-use dynamic_config::{Error, Fetched, Format, RemoteSource, WatchCapability, Watching};
+use dynamic_config::{Error, Fetched, Format, RemoteSource, Revision, WatchCapability, Watching};
 use dynamic_config_store_core::documents::{self, Overlap};
 use dynamic_config_store_core::guarded;
 
@@ -633,6 +633,11 @@ impl GitSource {
             self.keys.overlap(),
             &self.describe(),
         )?;
+
+        // The commit is what "which version is this" means for git, and
+        // an object id is `Opaque`: two commits do not sort, they are the
+        // same one or they are not.
+        let document = document.with_revision(Revision::Opaque(found.commit.to_string()));
 
         Ok((document, found.commit))
     }

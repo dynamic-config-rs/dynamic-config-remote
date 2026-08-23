@@ -42,7 +42,9 @@ mod http;
 use std::sync::Arc;
 use std::time::Duration;
 
-use dynamic_config::{Error, Fetched, Format, Pace, RemoteSource, WatchCapability, Watching};
+use dynamic_config::{
+    Error, Fetched, Format, Pace, RemoteSource, Revision, WatchCapability, Watching,
+};
 use dynamic_config_store_core::attempts::Attempts;
 use dynamic_config_store_core::tls::TlsConfig;
 use dynamic_config_store_core::{guarded, redacted, LoneAuthority};
@@ -249,7 +251,16 @@ impl ConfigServer {
             }
         }
 
-        let builder = rustls::ClientConfig::builder().with_root_certificates(roots);
+        let builder = if self.tls.skips_verification() {
+            // Quarantined here, in one branch with one name, so that a
+            // reader looking for "is this connection authenticated?" finds
+            // the answer in one place rather than inferring it.
+            rustls::ClientConfig::builder()
+                .dangerous()
+                .with_custom_certificate_verifier(Arc::new(AnyServerIsFine::new()?))
+        } else {
+            rustls::ClientConfig::builder().with_root_certificates(roots)
+        };
 
         let Some((certificate, key)) = self.tls.client_certificate_pem(&self.described)? else {
             return Ok(Arc::new(builder.with_no_client_auth()));
@@ -291,8 +302,14 @@ impl ConfigServer {
         let budget = Budget::starting(self.timeout);
 
         let secure = endpoint.secure;
-        let mut connection =
-            Connection::open(&endpoint, self.tls_client(secure)?, budget, &self.described).await?;
+        let mut connection = Connection::open(
+            &endpoint,
+            self.tls_client(secure)?,
+            self.tls.server_name(),
+            budget,
+            &self.described,
+        )
+        .await?;
 
         // The file wins, and is read per fetch: a projected token that
         // rotated between two fetches must present its NEW self. One
@@ -326,14 +343,23 @@ impl ConfigServer {
         // the engine wants the document, which is `config`. Reaching for it
         // by name rather than deserializing the envelope keeps this working
         // when the envelope grows a field.
-        let document = extract(&text, &self.described)?;
+        let (document, generation) = extract(&text, &self.described)?;
 
-        Ok(Fetched::new(document, Format::Json))
+        let document = Fetched::new(document, Format::Json);
+
+        // The envelope's own generation, when it carries one. The server
+        // increments it, so it orders — which is what stops a slow read of
+        // an old generation landing on top of a fast read of a new one.
+        Ok(match generation {
+            Some(generation) => document.with_revision(Revision::Counter(generation)),
+            None => document,
+        })
     }
 }
 
-/// The `config` member of the server's envelope, re-rendered.
-fn extract(text: &str, described: &str) -> Result<String, Error> {
+/// The `config` member of the server's envelope, re-rendered, and the
+/// generation it was served at.
+fn extract(text: &str, described: &str) -> Result<(String, Option<u64>), Error> {
     let envelope: serde_json::Value = serde_json::from_str(text)
         .map_err(|_| Error::remote(format!("{described}: the answer is not JSON")))?;
 
@@ -344,8 +370,16 @@ fn extract(text: &str, described: &str) -> Result<String, Error> {
         ))
     })?;
 
-    serde_json::to_string(document)
-        .map_err(|_| Error::remote(format!("{described}: the document will not re-render")))
+    // Absent is not a failure: an older server, or one that never grew the
+    // field, still serves documents — it just cannot be ordered by one.
+    let generation = envelope
+        .get("generation")
+        .and_then(serde_json::Value::as_u64);
+
+    let document = serde_json::to_string(document)
+        .map_err(|_| Error::remote(format!("{described}: the document will not re-render")))?;
+
+    Ok((document, generation))
 }
 
 impl ConfigServer {
@@ -455,9 +489,15 @@ impl ConfigServer {
         let tls = self
             .tls_client(secure)
             .map_err(|error| self.disconnected(&error))?;
-        let mut connection = Connection::open(&endpoint, tls, budget, &self.described)
-            .await
-            .map_err(|error| self.disconnected(&error))?;
+        let mut connection = Connection::open(
+            &endpoint,
+            tls,
+            self.tls.server_name(),
+            budget,
+            &self.described,
+        )
+        .await
+        .map_err(|error| self.disconnected(&error))?;
 
         let bearer = self.bearer().map_err(|error| self.disconnected(&error))?;
         let response = connection
@@ -694,7 +734,7 @@ mod tests {
         let text = r#"{"application":"billing","profile":"prod","generation":7,
                        "config":{"port":8080}}"#;
 
-        assert_eq!(extract(text, "a server").unwrap(), r#"{"port":8080}"#);
+        assert_eq!(extract(text, "a server").unwrap().0, r#"{"port":8080}"#);
     }
 
     #[test]
@@ -738,5 +778,87 @@ mod tests {
 
         assert!(!rendered.contains("hunter2"), "{rendered}");
         assert!(rendered.contains("<redacted>"), "{rendered}");
+    }
+}
+
+/// A certificate verifier that accepts every server, for
+/// `with_skip_verification`.
+///
+/// **Nothing here checks anything.** Every method answers "valid", which is
+/// the whole of what it does and the whole of what it is for: a caller who
+/// asked for an unauthenticated connection gets one, from a type whose name
+/// says so, rather than from a silently missing check somewhere else.
+///
+/// The signature methods are not stubbed — a TLS handshake still has to be
+/// cryptographically well-formed, and rustls' own algorithm list does that
+/// part. What is skipped is the question of *who* the peer is.
+#[derive(Debug)]
+struct AnyServerIsFine {
+    /// The provider's algorithm list, so the two signature checks below can
+    /// stay real rather than becoming a second thing that answers yes.
+    schemes: Vec<rustls::SignatureScheme>,
+}
+
+impl AnyServerIsFine {
+    fn new() -> Result<Self, Error> {
+        let provider = rustls::crypto::CryptoProvider::get_default()
+            .cloned()
+            .or_else(|| {
+                let provider = std::sync::Arc::new(rustls::crypto::ring::default_provider());
+                let _ = rustls::crypto::CryptoProvider::install_default((*provider).clone());
+                rustls::crypto::CryptoProvider::get_default().cloned()
+            })
+            .ok_or_else(|| Error::remote("no TLS cryptography provider is installed"))?;
+
+        Ok(Self {
+            schemes: provider
+                .signature_verification_algorithms
+                .supported_schemes(),
+        })
+    }
+}
+
+impl rustls::client::danger::ServerCertVerifier for AnyServerIsFine {
+    fn verify_server_cert(
+        &self,
+        _end_entity: &rustls::pki_types::CertificateDer<'_>,
+        _intermediates: &[rustls::pki_types::CertificateDer<'_>],
+        _server_name: &rustls::pki_types::ServerName<'_>,
+        _ocsp: &[u8],
+        _now: rustls::pki_types::UnixTime,
+    ) -> Result<rustls::client::danger::ServerCertVerified, rustls::Error> {
+        Ok(rustls::client::danger::ServerCertVerified::assertion())
+    }
+
+    fn verify_tls12_signature(
+        &self,
+        message: &[u8],
+        cert: &rustls::pki_types::CertificateDer<'_>,
+        dss: &rustls::DigitallySignedStruct,
+    ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
+        rustls::crypto::verify_tls12_signature(
+            message,
+            cert,
+            dss,
+            &rustls::crypto::ring::default_provider().signature_verification_algorithms,
+        )
+    }
+
+    fn verify_tls13_signature(
+        &self,
+        message: &[u8],
+        cert: &rustls::pki_types::CertificateDer<'_>,
+        dss: &rustls::DigitallySignedStruct,
+    ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
+        rustls::crypto::verify_tls13_signature(
+            message,
+            cert,
+            dss,
+            &rustls::crypto::ring::default_provider().signature_verification_algorithms,
+        )
+    }
+
+    fn supported_verify_schemes(&self) -> Vec<rustls::SignatureScheme> {
+        self.schemes.clone()
     }
 }

@@ -1283,9 +1283,9 @@ checksum = "d0881ea181b1df73ff77ffaaf9c7544ecc11e82fba9b5f27b262a3c73a332555"
 
 [[package]]
 name = "dynamic-config"
-version = "0.9.0"
+version = "0.10.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0245845d160b0a450130722105a94dc488893a4ff862f275d38576ad353bbb75"
+checksum = "5db0b6b9af6670ab2ccfd9cf30659be255ff0e9eda3da1ad086adf9fe3bc3e51"
 dependencies = [
  "arc-swap",
  "config",
@@ -1296,6 +1296,7 @@ dependencies = [
  "serde",
  "serde_json",
  "serde_yaml",
+ "sha2",
  "shuttle",
  "tokio",
  "toml 1.1.4+spec-1.1.0",
@@ -1303,7 +1304,7 @@ dependencies = [
 
 [[package]]
 name = "dynamic-config-consul"
-version = "0.9.0"
+version = "0.10.0"
 dependencies = [
  "base64 0.23.1",
  "dynamic-config",
@@ -1318,7 +1319,7 @@ dependencies = [
 
 [[package]]
 name = "dynamic-config-etcd"
-version = "0.9.0"
+version = "0.10.0"
 dependencies = [
  "dynamic-config",
  "dynamic-config-store-core",
@@ -1330,7 +1331,7 @@ dependencies = [
 
 [[package]]
 name = "dynamic-config-firestore"
-version = "0.9.0"
+version = "0.10.0"
 dependencies = [
  "dynamic-config",
  "dynamic-config-store-core",
@@ -1343,7 +1344,7 @@ dependencies = [
 
 [[package]]
 name = "dynamic-config-git"
-version = "0.9.0"
+version = "0.10.0"
 dependencies = [
  "dynamic-config",
  "dynamic-config-store-core",
@@ -1357,9 +1358,9 @@ dependencies = [
 
 [[package]]
 name = "dynamic-config-macros"
-version = "0.9.0"
+version = "0.10.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "31bc24ebed394ef05aa92e1f7b8f46b801b0ccf41890440091364be07e4abe40"
+checksum = "8d46acd9699b544599c36cdc53d91088d7325119f0b15b530546ba0451fea630"
 dependencies = [
  "proc-macro-crate",
  "proc-macro2",
@@ -1369,7 +1370,7 @@ dependencies = [
 
 [[package]]
 name = "dynamic-config-nats"
-version = "0.9.0"
+version = "0.10.0"
 dependencies = [
  "async-nats",
  "dynamic-config",
@@ -1383,7 +1384,7 @@ dependencies = [
 
 [[package]]
 name = "dynamic-config-redis"
-version = "0.9.0"
+version = "0.10.0"
 dependencies = [
  "dynamic-config",
  "dynamic-config-store-core",
@@ -1396,7 +1397,7 @@ dependencies = [
 
 [[package]]
 name = "dynamic-config-s3"
-version = "0.9.0"
+version = "0.10.0"
 dependencies = [
  "aws-config",
  "aws-sdk-s3",
@@ -1413,7 +1414,7 @@ dependencies = [
 
 [[package]]
 name = "dynamic-config-server"
-version = "0.9.0"
+version = "0.10.0"
 dependencies = [
  "axum",
  "bytes",
@@ -1438,14 +1439,14 @@ dependencies = [
 
 [[package]]
 name = "dynamic-config-store-core"
-version = "0.9.0"
+version = "0.10.0"
 dependencies = [
  "dynamic-config",
 ]
 
 [[package]]
 name = "dynamic-config-vault"
-version = "0.9.0"
+version = "0.10.0"
 dependencies = [
  "dynamic-config",
  "dynamic-config-store-core",

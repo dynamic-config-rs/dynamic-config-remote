@@ -175,7 +175,8 @@ use std::time::Duration;
 
 use aws_sdk_s3::config::timeout::TimeoutConfig;
 use dynamic_config::{
-    AsyncRemoteSource, Error, Fetched, Format, RemoteSink, WatchCapability, Watching,
+    AsyncRemoteSource, Error, Fetched, Format, Pace, RemoteSink, Revision, WatchCapability,
+    Watching,
 };
 use dynamic_config_store_core::attempts::Attempts;
 use dynamic_config_store_core::documents::{self, Overlap, MOST_KEYS};
@@ -342,6 +343,14 @@ pub struct S3 {
     attempts: Attempts,
 }
 
+/// The deadline on one attempt, where this crate built the client.
+///
+/// Ten seconds, matching every other store here. The AWS SDK ships with no
+/// timeout at all, which makes an unanswered request indistinguishable from
+/// a slow one — and a watch loop parked in the first looks exactly like a
+/// healthy store.
+const DEFAULT_TIMEOUT: Duration = Duration::from_secs(10);
+
 impl S3 {
     /// The object `key` in `bucket`, with credentials from the environment.
     ///
@@ -393,6 +402,22 @@ impl S3 {
 
         let mut source = Self::from_client(Client::from_conf(s3), bucket, key);
         source.endpoint = config.endpoint_url().map(str::to_owned);
+
+        // A default, because the SDK has none: an unanswered `GET` used to
+        // park a watch loop forever, with the store reported healthy because
+        // nothing had failed — it simply had not returned. Only where this
+        // crate built the client; `from_client` is the escape hatch and
+        // stays one, so a caller who configured their own timeouts keeps
+        // them.
+        //
+        // Per *attempt*, and the SDK retries three times by default, so the
+        // ceiling on a whole fetch is thirty seconds rather than ten. That
+        // is the same sentence `with_timeout` already carries.
+        if config.timeout_config().is_none_or(|timeouts| {
+            timeouts.operation_attempt_timeout().is_none() && timeouts.operation_timeout().is_none()
+        }) {
+            source = source.with_timeout(DEFAULT_TIMEOUT);
+        }
 
         source
     }
@@ -464,6 +489,24 @@ impl S3 {
     ) -> Result<Self, Error> {
         let bucket = bucket.into();
         let described = format!("s3 {bucket}");
+
+        if let Some(name) = tls.server_name() {
+            return Err(tls_core::unsupported(
+                &described,
+                &format!("verifying against the name {name:?} rather than the address's"),
+                "the AWS SDK's TLS context takes no name override; build the \
+                 connector yourself and use `from_client`",
+            ));
+        }
+
+        if tls.skips_verification() {
+            return Err(tls_core::unsupported(
+                &described,
+                "connecting without verifying the server",
+                "the AWS SDK's TLS context has no such switch; build the \
+                 connector yourself and use `from_client`",
+            ));
+        }
 
         if tls.client_certificate().is_some() {
             return Err(tls_core::unsupported(
@@ -768,6 +811,12 @@ impl S3 {
 
         let mut seen: Option<String> = None;
 
+        // Paced rather than flat, for the same two reasons every polling
+        // loop here is: a bucket that is refusing should not be asked at
+        // full rate by a whole fleet, and an object that has been deleted
+        // is a condition waiting will not cure.
+        let mut pace = Pace::new(interval);
+
         while watching.keep_going() {
             match self.etag().await {
                 // The first tick records the tag without firing: the object it
@@ -781,6 +830,7 @@ impl S3 {
                     match self.read().await {
                         Ok((document, current)) => {
                             seen = current.or(Some(tag));
+                            pace.succeeded();
 
                             guarded(&mut on_change, document, &self.describe())?;
                         }
@@ -789,22 +839,28 @@ impl S3 {
                         // has not been delivered. `seen` is deliberately left
                         // where it was, so the next tick tries the same tag
                         // again rather than treating a failed read as read.
-                        Err(error) => self.attempts.failed(&error),
+                        Err(error) => {
+                            pace.failed();
+                            self.attempts.failed(&error);
+                        }
                     }
                 }
 
                 // Unchanged: the object is what it was, which is a store
                 // answering. Nothing to report and nothing to deliver.
-                Ok(_) => {}
+                Ok(_) => pace.succeeded(),
 
                 // The check itself failed — an expired credential, a bucket
                 // briefly unreachable. It does not end the watch, which is
                 // what makes reporting it the only way anyone learns that
                 // this loop has been polling into the void.
-                Err(error) => self.attempts.failed(&error),
+                Err(error) => {
+                    pace.failed();
+                    self.attempts.failed(&error);
+                }
             }
 
-            sleep_while(interval, watching).await;
+            sleep_while(pace.next_wait(), watching).await;
         }
 
         Ok(())
@@ -849,7 +905,15 @@ impl S3 {
 
         let (text, tag) = self.object(key).await?;
 
-        Ok((Fetched::new(text, format), tag))
+        // An ETag is the definition of `Opaque`: the store never claimed an
+        // order for it, so it means "the same object" or "a different one"
+        // and nothing more.
+        let document = match &tag {
+            Some(tag) => Fetched::new(text, format).with_revision(Revision::Opaque(tag.clone())),
+            None => Fetched::new(text, format),
+        };
+
+        Ok((document, tag))
     }
 
     /// One object's body, and its ETag.

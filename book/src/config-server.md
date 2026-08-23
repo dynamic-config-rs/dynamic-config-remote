@@ -507,7 +507,10 @@ somewhere:
   a service that wants request spans and `traceparent` propagation mounts
   it inside its own axum application, where both are its own choice — and
   the library's own spans already reach OTLP through
-  `tracing-opentelemetry` in that application's graph.
+  `tracing-opentelemetry` in that application's graph. This is a decision
+  about *this* program: the engine has an opt-in `otel` feature and the
+  Kubernetes binaries carry an exporter, because they do not hold every
+  service's secrets.
 - **JWT credentials.** One credential shape, complete, beats two with one
   tested. A client certificate is not a second shape: it is a gate in
   front of the same one — and mutual TLS shipped without touching the

@@ -1,8 +1,9 @@
 # Vault
 
 [`dynamic-config-vault`](https://docs.rs/dynamic-config-vault) reads
-configuration from HashiCorp Vault's KV v2 store, over its plain-HTTP API:
-the **blocking** `RemoteSource`.
+configuration from HashiCorp Vault — its KV v2 store, or since 0.10 a
+dynamic-secret engine — over the plain-HTTP API: the **blocking**
+`RemoteSource`.
 
 ```toml
 [dependencies]
@@ -87,6 +88,65 @@ not answering* and *how stale what it last said has become*. Reporting is
 infallible and silent: a loop is never handed a failure to report a failure. A
 `fetch()` needs none of it, because a fetch already records itself.
 [The remote store's own numbers](https://dynamic-config-rs.github.io/telemetry.html#the-remote-stores-own-numbers)
+
+## Dynamic secrets
+
+`with_dynamic()` reads an engine that *mints* credentials —
+`database/creds/my-role`, `pki/issue/…`, `aws/creds/…` — rather than a
+document somebody wrote:
+
+```rust
+use dynamic_config_vault::{Auth, Vault};
+
+DbConfig::set_remote(
+    Vault::new("https://vault.internal:8200", "database", "creds/app")
+        .with_auth(Auth::kubernetes("myapp"))
+        .with_dynamic(),
+);
+```
+
+Three things change.
+
+**The path.** `{mount}/{path}` rather than `{mount}/data/{path}`, and the
+values come from `data` rather than `data.data`. The mode is stated rather
+than detected from the response, because a mistyped mount should be an
+error and not a quiet fall into the other shape — and each mode's refusal
+names the builder to add or drop.
+
+**The lease.** The response's `lease_id`, `lease_duration` and `renewable`
+ride along on the `Fetched`. Renewing and revoking are
+[`RenewableSource`](https://docs.rs/dynamic-config): `renew` through
+`sys/leases/renew`, `revoke` through `sys/leases/revoke`. **What a renewal
+answers is authoritative** — a role's `max_ttl` is a ceiling the caller
+cannot see, so schedule the next renewal from what Vault granted, never from
+what was asked for.
+
+**The certificate's own clock, for `pki/issue`.** A PKI role can hand back
+a lease longer than the certificate it issued: the lease is Vault's
+accounting record, and `notAfter` is what a TLS peer enforces. The `Lease`
+therefore carries **whichever runs out first**. Vault reports `notAfter` as
+`data.expiration`, seconds since the epoch, so this needs no X.509 parser —
+the number is already in the response.
+
+That timestamp is Vault's wall clock read against the caller's, and the two
+are not the same clock, so an `expiration` that has *already* passed is
+treated as skew and the lease's own duration wins. Vault would not issue an
+expired certificate; believing the arithmetic instead would re-issue in a
+tight loop against a server that thinks everything is fine.
+
+**One path.** Dynamic mode reads a single path and refuses a list. Every
+read mints a credential with a lease of its own, and a document carries one
+— merging several would leave every lease but one unrenewed and unrevoked,
+which is a credential leak wearing a merge's clothes.
+
+The watch capability drops to `Interval`, because there is nothing cheap to
+poll: a dynamic engine has no version counter and no metadata endpoint, and
+asking *has it changed* is not separable from asking for a new one.
+
+This is a **capability**, not a replacement for the credential the client
+authenticates with. That one is already managed — refreshed before expiry,
+re-obtained when refused — and the two lifetimes stay separate: one belongs
+to the connection, the other to the document.
 
 The [README](https://github.com/dynamic-config-rs/dynamic-config-remote/tree/main/dynamic-config-vault)
 carries the full story, the auth and builder tables and the

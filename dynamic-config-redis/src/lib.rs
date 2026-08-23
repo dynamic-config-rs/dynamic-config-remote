@@ -443,6 +443,32 @@ impl Redis {
             )));
         }
 
+        if let Some(name) = tls.server_name() {
+            return Err(dynamic_config_store_core::tls::unsupported(
+                &described,
+                &format!("verifying against the name {name:?} rather than the address's"),
+                "`redis` takes no name override; address the server by the \
+                 name its certificate carries",
+            ));
+        }
+
+        if tls.skips_verification() {
+            // `redis` can express it — `ConnectionAddr::TcpTls` has an
+            // `insecure` flag — but only under its `tls-rustls-insecure`
+            // feature, which this crate does not enable and will not: it
+            // would put a certificate verifier that accepts anything into
+            // every build, for the sake of a setting almost nobody wants.
+            // Set here and silently ignored is the one outcome worse than
+            // refused.
+            return Err(dynamic_config_store_core::tls::unsupported(
+                &described,
+                "connecting without verifying the server",
+                "`redis` reaches it only under its `tls-rustls-insecure` \
+                 feature, which this crate does not enable; name the \
+                 authority with `with_ca_certificate_file` instead",
+            ));
+        }
+
         let certificates = redis::TlsCertificates {
             root_cert: tls.ca_certificate_pem(&described)?,
             client_tls: tls

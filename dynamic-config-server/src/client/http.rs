@@ -200,9 +200,13 @@ impl Connection {
     /// carries certificate or key material**: a handshake failure is
     /// rustls's own sentence, which names the certificate's problem and not
     /// its contents.
+    /// `verify_as` is the name the certificate must carry, when that is not
+    /// the address's — for an endpoint written as an IP against a
+    /// certificate issued for a hostname.
     pub(super) async fn open(
         endpoint: &Endpoint,
         tls: Option<&Arc<rustls::ClientConfig>>,
+        verify_as: Option<&str>,
         budget: Budget,
         described: &str,
     ) -> Result<Self, Error> {
@@ -224,11 +228,15 @@ impl Connection {
             return Self::handshake(stream, described).await;
         };
 
-        let name = ServerName::try_from(endpoint.host.clone()).map_err(|_| {
+        // The address is what is dialled; this is what is checked. They are
+        // the same string unless the caller said otherwise, which is the
+        // case an IP endpoint with a named certificate needs.
+        let checked = verify_as.unwrap_or(&endpoint.host).to_owned();
+
+        let name = ServerName::try_from(checked.clone()).map_err(|_| {
             Error::remote(format!(
-                "{described}: `{}` is neither a DNS name nor an IP address, so no certificate \
-                 could be checked against it",
-                endpoint.host
+                "{described}: `{checked}` is neither a DNS name nor an IP address, so no \
+                 certificate could be checked against it"
             ))
         })?;
         let stream = deadline(

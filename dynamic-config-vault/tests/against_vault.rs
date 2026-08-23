@@ -214,7 +214,10 @@ fn one_missing_path_in_a_list_fails_the_whole_fetch() {
 
     let error = source.fetch().expect_err("the second path is not there");
 
-    assert_eq!(error.kind(), dynamic_config::ErrorKind::Remote);
+    // `Absent`, not `Remote`: Vault answered. The distinction is what lets a
+    // caller tell "the store is down, wait" from "that secret is not there,
+    // and waiting will not change it".
+    assert_eq!(error.kind(), dynamic_config::ErrorKind::Absent);
     assert!(error.to_string().contains("myapp/never-written"), "{error}");
 }
 
@@ -228,7 +231,10 @@ fn a_path_with_no_secret_says_so() {
 
     let error = source.fetch().expect_err("nothing is stored there");
 
-    assert_eq!(error.kind(), dynamic_config::ErrorKind::Remote);
+    // A path that holds nothing is `Absent`. It used to be `Remote` — the
+    // category a watch loop waits out — which is how a deleted secret went
+    // on being served with the store reported healthy the whole time.
+    assert_eq!(error.kind(), dynamic_config::ErrorKind::Absent);
 }
 
 // ---------------------------------------------------------------------------
@@ -757,4 +763,127 @@ fn a_deleted_secret_is_not_reported_as_a_change() {
         .join()
         .expect("the loop should end")
         .expect("cleanly");
+}
+
+// ---------------------------------------------------------------------------
+// Dynamic secrets, against a real engine
+// ---------------------------------------------------------------------------
+
+/// A credential Vault mints, renews and takes back.
+///
+/// The mock tests pin the wire shapes; this one proves Vault accepts them.
+/// It needs an engine that actually issues leases, and the database engine
+/// is the one Vault ships that needs no cloud account — so a Postgres
+/// container rides along.
+#[test]
+fn a_dynamic_credential_is_issued_renewed_and_revoked() {
+    use dynamic_config::{RenewableSource, WatchCapability};
+    use testcontainers_modules::postgres::Postgres;
+
+    let vault = vault_with("unused/placeholder", serde_json::json!({ "x": 1 }));
+    let database = start_resilient(Postgres::default);
+
+    let port = database
+        .get_host_port_ipv4(5432)
+        .expect("Postgres should expose its port");
+
+    // The test reaches Postgres on localhost; Vault cannot, because Vault
+    // is itself in a container and localhost there is Vault. It reaches the
+    // published port through the bridge gateway instead — the one address
+    // that means "the host" from inside a container on Linux, where
+    // `host.docker.internal` is not resolvable by default.
+    let gateway = std::env::var("DOCKER_HOST_GATEWAY").unwrap_or_else(|_| "172.17.0.1".to_owned());
+    let reachable =
+        format!("postgresql://postgres:postgres@{gateway}:{port}/postgres?sslmode=disable");
+
+    post(
+        &vault.address,
+        "sys/mounts/database",
+        serde_json::json!({ "type": "database" }),
+    );
+    post(
+        &vault.address,
+        "database/config/pg",
+        serde_json::json!({
+            "plugin_name": "postgresql-database-plugin",
+            "allowed_roles": "app",
+            "connection_url": reachable,
+            "username": "postgres",
+            "password": "postgres",
+        }),
+    );
+    post(
+        &vault.address,
+        "database/roles/app",
+        serde_json::json!({
+            "db_name": "pg",
+            "creation_statements":
+                "CREATE ROLE \"{{name}}\" WITH LOGIN PASSWORD '{{password}}' VALID UNTIL '{{expiration}}';",
+            // Short, so a renewal is observable without waiting an hour, and
+            // long enough that the test is not racing the expiry.
+            "default_ttl": "60s",
+            "max_ttl": "300s",
+        }),
+    );
+
+    let source = Vault::new(&vault.address, "database", "creds/app")
+        .with_key("db")
+        .with_token(TOKEN)
+        .with_dynamic();
+
+    assert_eq!(
+        source.watch_capability(),
+        WatchCapability::Interval,
+        "a dynamic engine has no version counter to poll"
+    );
+
+    let document = source.fetch().expect("the engine issues a credential");
+
+    assert!(
+        document.text.contains("username"),
+        "the credential is the document"
+    );
+
+    let lease = document
+        .lease
+        .expect("a dynamic secret is issued under a lease");
+
+    assert!(lease.renewable);
+    assert_eq!(lease.ttl, std::time::Duration::from_secs(60));
+
+    // Twice, because the first renewal proves the call and the second
+    // proves the lease survived it.
+    let once = source.renew(&lease).expect("the first renewal");
+    let twice = source.renew(&once).expect("the second renewal");
+
+    assert_eq!(twice.id, lease.id, "renewing extends; it does not reissue");
+
+    // Vault knows the lease until it is handed back.
+    let before = post(
+        &vault.address,
+        "sys/leases/lookup",
+        serde_json::json!({ "lease_id": lease.id }),
+    );
+    assert_eq!(
+        before.get("data").and_then(|data| data.get("id")),
+        Some(&serde_json::Value::String(lease.id.clone()))
+    );
+
+    source.revoke(&lease).expect("the revocation");
+
+    // And does not afterwards. `post` panics on a non-2xx, so the lookup
+    // failing is the assertion — spelled with `catch_unwind` because that is
+    // the only way to assert on a helper that panics by design.
+    let gone = std::panic::catch_unwind(|| {
+        post(
+            &vault.address,
+            "sys/leases/lookup",
+            serde_json::json!({ "lease_id": lease.id }),
+        )
+    });
+
+    assert!(
+        gone.is_err(),
+        "a revoked lease must not still be known to Vault"
+    );
 }

@@ -35,6 +35,110 @@ deliberately, with an entry under Changed saying so.
 
 ## [Unreleased]
 
+## [0.10.0] — 2026-08-23
+
+### Added
+
+- **Vault reads dynamic secrets.** `Vault::with_dynamic()` reads the path
+  itself rather than KV v2's `data/` nesting, takes the values from `data`,
+  and keeps the `lease_id`, `lease_duration` and `renewable` the engine
+  answered with — so `database/creds`, `pki/issue` and `aws/creds` are
+  readable as configuration. Explicit rather than detected from the response:
+  a mistyped mount should be an error, not a quiet fall into the other mode,
+  and each refusal names the builder to add or drop.
+- **A decryption stage between the store and the resolver.** A configuration
+  document in git whose passwords are ciphertext is reviewable in a pull
+  request, diffable, and useless to whoever clones the repository — the
+  shape SOPS made popular. `store-core`'s `Transformed` is a source that
+  holds a source and rewrites the document on its way past;
+  `dynamic-config-vault`'s `Transit` is the transform that decrypts
+  `vault:v1:…` values through a transit mount.
+
+  A wrapper rather than a stage inside the engine, because a wrapper
+  composes with every store already: git, S3, Consul and the config server
+  are the same line of code, and an application that encrypts nothing gains
+  no API and pays nothing.
+
+  The revision and the lease pass through untouched, so the recency fence
+  and the renewal timer are unaffected. `Transit` decrypts **values**
+  rather than whole documents — a file that is one opaque blob cannot be
+  reviewed — in one batch request whatever the count, and in no request at
+  all for a document with nothing sealed in it. It borrows the `Vault`
+  beside it rather than authenticating a second time.
+- **A `pki/issue` certificate's own expiry binds its lease.** A PKI role can
+  hand back a lease longer than the certificate it issued — the lease is
+  Vault's accounting record, `notAfter` is what a TLS peer enforces — so the
+  `Lease` now carries whichever runs out first. Vault reports `notAfter` as
+  `data.expiration`, so this needs no X.509 parser. An `expiration` already
+  in the past is treated as clock skew rather than believed: the two clocks
+  belong to different machines, Vault does not issue expired certificates,
+  and the arithmetic would otherwise re-issue in a tight loop.
+- **`RenewableSource` for Vault**: `renew` through `sys/leases/renew` and
+  `revoke` through `sys/leases/revoke`. The answer to a renewal is
+  authoritative — a role's `max_ttl` is a ceiling the caller cannot see — so
+  the next renewal is scheduled from what Vault granted, never from what was
+  asked for. Dynamic mode reads **one** path: every read mints a credential
+  with its own lease, and merging several would leave every lease but one
+  unrenewed and unrevoked.
+- **Every store that has a revision now reports one.** Vault's KV version and
+  Consul's index as `Counter`; etcd's `mod_revision` and NATS' KV revision
+  likewise; git's commit, S3's ETag and Firestore's `updateTime` as `Opaque`;
+  the config server's envelope generation as `Counter`. That is what makes
+  the engine's new recency fence real: a slow read of an old version can no
+  longer land on top of a fast read of a new one. Redis reports none, because
+  keyspace notifications carry none.
+
+- **`TlsConfig` gains a server name and a way to go without verification.**
+  `with_server_name` says which name the certificate must carry when the
+  address is one it does not name — a cluster IP, a load balancer — and
+  keeps the server authenticated: the certificate still chains and still has
+  to carry that name. `with_skip_verification` turns authentication off
+  entirely, which is not a weaker TLS but TLS without the part that means
+  anything.
+
+  Neither is uniform, and the two supported sets are almost disjoint:
+  `ureq` (Vault, Consul, Firestore) can skip verification and cannot
+  override a name; `tonic` (etcd) can override a name and cannot skip. The
+  config server does both, git skips, and Redis, NATS and S3 do neither. A
+  store that cannot express one **refuses the whole configuration by name**,
+  on the same rule the other three settings already followed.
+
+  Skipping exists because deployments exist that cannot be fixed today and
+  still have to run, and because the alternative to a named switch was a
+  caller reaching into `with_agent` or `from_client` where nothing warns.
+  `with_ca_certificate_file` remains the answer to both cases people usually
+  reach for it in.
+- **A ceiling on requests in flight per source.** A watch, a resync, an auth
+  refresh and a lease renewal can all be out at once, and five thousand pods
+  doing that to one store is the number this exists for. Ten by default — the
+  same number and the same argument as the reference implementation's
+  `max_connections_per_host` — and a request past the ceiling is **refused
+  rather than queued**, so it backs off through the pace it already has. A
+  queue would hold a delivery behind a resync behind an auth refresh, none of
+  which is improved by being later.
+
+### Changed
+
+- **A document that is not there is `Absent`, not `Remote`.** "No key held a
+  value" was categorised as a store being unreachable — the category a watch
+  loop waits out — so a deleted Vault secret produced no delivery, no log
+  line and no metric movement, and the stale document went on being served
+  with every health check reporting fine. A 404 and a KV v2 soft delete are
+  both `Absent` now, and the two conditions are told apart because they
+  deserve different answers: waiting cures an outage and does not bring back
+  a key.
+- **The polling watch loops back off.** Vault, Consul and S3 each override
+  `watch` and so never reached `Pace`: they slept a flat interval, which
+  meant a mistyped path polled at full rate forever and a fleet that lost its
+  store together came back to it together. All three are paced now, and reset
+  on success.
+- **S3 has a default timeout** where this crate built the client. The AWS SDK
+  ships with none, which made an unanswered `GET` indistinguishable from a
+  slow one and could park a watch loop indefinitely. Ten seconds per attempt,
+  matching every other store here; `from_client` is untouched, because a
+  caller who configured their own client configured their own timeouts.
+- The engine floor is **0.10**, and `Keys` is `#[non_exhaustive]`.
+
 ## [0.9.0] — 2026-08-21
 
 ### Changed
@@ -160,7 +264,8 @@ deliberately, with an entry under Changed saying so.
   crates are now their own book, at
   [dynamic-config-rs.github.io/remote/](https://dynamic-config-rs.github.io/remote/).
 
-[Unreleased]: https://github.com/dynamic-config-rs/dynamic-config-remote/compare/v0.9.0...HEAD
+[Unreleased]: https://github.com/dynamic-config-rs/dynamic-config-remote/compare/v0.10.0...HEAD
+[0.10.0]: https://github.com/dynamic-config-rs/dynamic-config-remote/compare/v0.9.0...v0.10.0
 [0.9.0]: https://github.com/dynamic-config-rs/dynamic-config-remote/compare/v0.8.0...v0.9.0
 [0.8.0]: https://github.com/dynamic-config-rs/dynamic-config-remote/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/dynamic-config-rs/dynamic-config-remote/compare/v0.6.2...v0.7.0
