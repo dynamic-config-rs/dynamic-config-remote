@@ -864,3 +864,509 @@ fn a_tls_failure_never_carries_the_token_out_with_it() {
     // And it still says what a person needs in order to fix it.
     assert!(printed.contains("/nonexistent/private-ca.pem"), "{printed}");
 }
+
+// ---------------------------------------------------------------------------
+// Dynamic secrets: the lease, and the two calls that manage it.
+// ---------------------------------------------------------------------------
+
+/// [`scripted`], keeping what the client actually sent.
+///
+/// The lease calls are the first here whose *request* is the thing under
+/// test — a renewal that posts the wrong `lease_id` renews somebody else's
+/// credential — so the bytes are captured rather than counted.
+fn recording(responses: Vec<String>) -> (String, Arc<std::sync::Mutex<Vec<String>>>) {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let address = format!("http://{}", listener.local_addr().unwrap());
+    let seen: Arc<std::sync::Mutex<Vec<String>>> = Arc::new(std::sync::Mutex::new(Vec::new()));
+
+    let recorded = Arc::clone(&seen);
+    std::thread::spawn(move || {
+        for response in responses {
+            let Ok((mut stream, _)) = listener.accept() else {
+                return;
+            };
+
+            let mut head = Vec::new();
+            let mut byte = [0u8; 1];
+
+            while !head.ends_with(b"\r\n\r\n") && stream.read(&mut byte).is_ok_and(|n| n == 1) {
+                head.push(byte[0]);
+            }
+
+            // However long the body says it is, exactly — reading to the end
+            // of the stream would block on a connection the client keeps.
+            let text = String::from_utf8_lossy(&head).into_owned();
+            let length: usize = text
+                .lines()
+                .find_map(|line| {
+                    line.strip_prefix("Content-Length: ")
+                        .or_else(|| line.strip_prefix("content-length: "))
+                })
+                .and_then(|value| value.trim().parse().ok())
+                .unwrap_or(0);
+
+            let mut body = vec![0u8; length];
+            let _ = stream.read_exact(&mut body);
+
+            recorded
+                .lock()
+                .unwrap()
+                .push(text + &String::from_utf8_lossy(&body));
+
+            let _ = stream.write_all(response.as_bytes());
+        }
+    });
+
+    (address, seen)
+}
+
+/// What a dynamic engine answers: values at `data`, the lease beside them.
+const ISSUED: &str = r#"{
+    "lease_id": "database/creds/app/1a2b",
+    "lease_duration": 3600,
+    "renewable": true,
+    "data": {"username": "v-root-app-xyz", "password": "A1b2C3"}
+}"#;
+
+#[test]
+fn a_dynamic_read_takes_the_values_from_data_and_keeps_the_lease() {
+    let (address, seen) = recording(vec![http("200 OK", ISSUED)]);
+
+    let source = Vault::new(&address, "database", "creds/app")
+        .with_token("root")
+        .with_dynamic()
+        .with_key("db");
+
+    let document = source.fetch().expect("the engine issues a credential");
+
+    // Read at the path itself: a dynamic engine has no `data/` segment, and
+    // asking for one is how a working mount answers 404.
+    let request = &seen.lock().unwrap()[0];
+    assert!(request.contains("GET /v1/database/creds/app "), "{request}");
+
+    assert!(document.text.contains("v-root-app-xyz"));
+
+    let lease = document.lease.expect("a dynamic secret carries its lease");
+
+    assert_eq!(lease.id, "database/creds/app/1a2b");
+    assert_eq!(lease.ttl, Duration::from_secs(3600));
+    assert!(lease.renewable);
+}
+
+/// `ureq` can turn verification off and cannot check a *different* name, so
+/// a server name is refused by name rather than approximated with
+/// `use_sni(false)` — which would connect, look like it worked, and check
+/// nothing about who answered.
+#[test]
+fn a_server_name_is_refused_here_and_says_why() {
+    let source = Vault::new("https://10.0.0.5:8200", "secret", "myapp/db")
+        .with_token("root")
+        .with_tls(dynamic_config_vault::TlsConfig::new().with_server_name("vault.internal"));
+
+    let error = source
+        .fetch()
+        .expect_err("this client has no name override")
+        .to_string();
+
+    assert!(error.contains("vault.internal"), "{error}");
+    assert!(error.contains("refused rather than ignored"), "{error}");
+}
+
+/// The SOPS shape, end to end: a document whose passwords are ciphertext
+/// arrives readable, and everything around them is untouched.
+#[test]
+fn transit_decrypts_the_sealed_values_and_leaves_the_rest_alone() {
+    use dynamic_config_store_core::transform::Transform as _;
+
+    // Two distinct ciphertexts, one of them named twice in the document.
+    let (address, seen) = recording(vec![http(
+        "200 OK",
+        r#"{"data": {"batch_results": [
+            {"plaintext": "aHVudGVyMg=="},
+            {"plaintext": "cy0zY3ItM3Q="}
+        ]}}"#,
+    )]);
+
+    let transit = dynamic_config_vault::Transit::new(
+        Vault::new(&address, "secret", "unused").with_token("root"),
+        "transit",
+        "config",
+    );
+
+    let sealed = "host: db.internal
+                  port: 5432
+                  password: vault:v1:AAAA
+                  url: pg://app:vault:v1:AAAA@db.internal/app
+                  api_key: vault:v1:BBBB
+";
+
+    let readable = transit.apply(sealed).expect("the values decrypt");
+
+    assert!(readable.contains("password: hunter2"), "{readable}");
+    assert!(
+        readable.contains("pg://app:hunter2@db.internal/app"),
+        "the same ciphertext is replaced everywhere it appears: {readable}"
+    );
+    assert!(readable.contains("api_key: s-3cr-3t"), "{readable}");
+
+    // Everything that was not sealed is byte-for-byte what it was.
+    assert!(readable.contains("host: db.internal"));
+    assert!(readable.contains("port: 5432"));
+    assert!(!readable.contains("vault:v1:"));
+
+    // One request for both values, not one per value.
+    assert_eq!(seen.lock().unwrap().len(), 1);
+
+    let request = &seen.lock().unwrap()[0];
+    assert!(
+        request.contains("POST /v1/transit/decrypt/config "),
+        "{request}"
+    );
+    assert!(request.contains("batch_input"), "{request}");
+}
+
+/// A document with nothing sealed in it costs no request at all, which is
+/// what makes this safe to leave in front of a store whose documents are
+/// only sometimes encrypted.
+#[test]
+fn a_document_with_nothing_sealed_makes_no_request() {
+    use dynamic_config_store_core::transform::Transform as _;
+
+    let (address, seen) = recording(vec![]);
+
+    let transit = dynamic_config_vault::Transit::new(
+        Vault::new(&address, "secret", "unused").with_token("root"),
+        "transit",
+        "config",
+    );
+
+    let plain = "host: db.internal
+port: 5432
+";
+
+    assert_eq!(transit.apply(plain).expect("nothing to do"), plain);
+    assert!(seen.lock().unwrap().is_empty(), "no request was made");
+}
+
+/// Vault reports a per-entry failure inside a 200, so a batch where one key
+/// is wrong looks like a success until the entry is read.
+#[test]
+fn a_key_that_cannot_decrypt_fails_the_document() {
+    use dynamic_config_store_core::transform::Transform as _;
+
+    let (address, _seen) = recording(vec![http(
+        "200 OK",
+        r#"{"data": {"batch_results": [
+            {"error": "unable to decrypt: invalid ciphertext version"}
+        ]}}"#,
+    )]);
+
+    let transit = dynamic_config_vault::Transit::new(
+        Vault::new(&address, "secret", "unused").with_token("root"),
+        "transit",
+        "config",
+    );
+
+    let error = transit
+        .apply(
+            "password: vault:v1:AAAA
+",
+        )
+        .expect_err("the entry carries the failure")
+        .to_string();
+
+    assert!(error.contains("could not be decrypted"), "{error}");
+    assert!(error.contains("invalid ciphertext version"), "{error}");
+
+    // Vault's sentence is about a key and a version, and quoting it is
+    // safe — but the document must not travel with it.
+    assert!(!error.contains("vault:v1:AAAA"), "{error}");
+}
+
+/// A certificate's own expiry binds the lease, when it is the shorter one.
+///
+/// A PKI role can hand back a lease longer than the certificate it issued:
+/// the lease is Vault's accounting record, and `notAfter` is what a TLS
+/// peer enforces. Re-issuing on the lease's clock would leave a pod holding
+/// a certificate nothing will accept, which reads as a network fault rather
+/// than as an expiry.
+#[test]
+fn a_certificate_that_expires_before_its_lease_shortens_it() {
+    let expiration = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs()
+        + 600;
+
+    let (address, _seen) = recording(vec![http(
+        "200 OK",
+        &format!(
+            r#"{{"lease_id": "pki/issue/web/9f8e", "lease_duration": 3600,
+                 "renewable": false,
+                 "data": {{"certificate": "-----BEGIN CERTIFICATE-----",
+                           "expiration": {expiration}}}}}"#
+        ),
+    )]);
+
+    let source = Vault::new(&address, "pki", "issue/web")
+        .with_token("root")
+        .with_dynamic()
+        .with_key("tls");
+
+    let lease = source
+        .fetch()
+        .expect("the engine issues a certificate")
+        .lease
+        .expect("a certificate carries its lease");
+
+    assert!(
+        lease.ttl <= Duration::from_secs(600),
+        "the certificate has ten minutes and the lease claimed an hour: {:?}",
+        lease.ttl
+    );
+    assert!(
+        lease.ttl > Duration::from_secs(540),
+        "and it is the certificate's own number, not a floor: {:?}",
+        lease.ttl
+    );
+    assert!(
+        !lease.renewable,
+        "pki/issue does not renew — a certificate is re-issued, never extended"
+    );
+}
+
+/// An `expiration` in the past is a skewed clock, not an expired
+/// certificate — Vault would not have issued one. Believing it would
+/// schedule the next re-issue immediately and turn one pod into a fetch
+/// loop, so the lease's own number wins.
+#[test]
+fn an_expiration_already_past_falls_back_to_the_lease() {
+    let (address, _seen) = recording(vec![http(
+        "200 OK",
+        r#"{"lease_id": "pki/issue/web/9f8e", "lease_duration": 3600,
+            "renewable": false,
+            "data": {"certificate": "-----BEGIN CERTIFICATE-----",
+                     "expiration": 1000000000}}"#,
+    )]);
+
+    let source = Vault::new(&address, "pki", "issue/web")
+        .with_token("root")
+        .with_dynamic()
+        .with_key("tls");
+
+    let lease = source.fetch().expect("issued").lease.expect("leased");
+
+    assert_eq!(lease.ttl, Duration::from_secs(3600));
+}
+
+/// A database credential has no `expiration`, and its lease is the only
+/// clock there is. The certificate rule must not reach it.
+#[test]
+fn a_credential_without_an_expiration_keeps_its_lease_duration() {
+    let (address, _seen) = recording(vec![http("200 OK", ISSUED)]);
+
+    let source = Vault::new(&address, "database", "creds/app")
+        .with_token("root")
+        .with_dynamic()
+        .with_key("db");
+
+    let lease = source.fetch().expect("issued").lease.expect("leased");
+
+    assert_eq!(lease.ttl, Duration::from_secs(3600));
+}
+
+/// The read is at `{mount}/{path}`, not `{mount}/data/{path}` — which is
+/// the whole difference between the two modes, and the one worth pinning.
+#[test]
+fn a_kv2_read_is_still_nested_under_data() {
+    let (address, seen) = recording(vec![http(
+        "200 OK",
+        r#"{"data": {"data": {"host": "db"}, "metadata": {"version": 4}}}"#,
+    )]);
+
+    let source = Vault::new(&address, "secret", "myapp/db").with_token("root");
+
+    source.fetch().expect("a KV v2 read");
+
+    let request = &seen.lock().unwrap()[0];
+    assert!(
+        request.contains("GET /v1/secret/data/myapp/db "),
+        "{request}"
+    );
+}
+
+#[test]
+fn a_renewal_names_the_lease_and_answers_with_what_was_granted() {
+    use dynamic_config::{Lease, RenewableSource};
+
+    // Vault granted less than was asked for — a role's `max_ttl` is a
+    // ceiling the caller cannot see, so the answer is authoritative.
+    let (address, seen) = recording(vec![http(
+        "200 OK",
+        r#"{"lease_id": "database/creds/app/1a2b", "lease_duration": 900, "renewable": true}"#,
+    )]);
+
+    let source = Vault::new(&address, "database", "creds/app")
+        .with_token("root")
+        .with_dynamic();
+
+    let held = Lease {
+        id: "database/creds/app/1a2b".to_owned(),
+        ttl: Duration::from_secs(3600),
+        renewable: true,
+    };
+
+    let granted = source.renew(&held).expect("the renewal succeeds");
+
+    let request = &seen.lock().unwrap()[0];
+
+    assert!(request.contains("POST /v1/sys/leases/renew "), "{request}");
+    assert!(request.contains("database/creds/app/1a2b"), "{request}");
+
+    assert_eq!(
+        granted.ttl,
+        Duration::from_secs(900),
+        "the next renewal is scheduled from what Vault granted, never from \
+         what was asked for"
+    );
+}
+
+/// Vault answers a revocation with 204 and no body at all. "It worked" is
+/// not a parse failure.
+#[test]
+fn a_revocation_succeeds_on_an_empty_answer() {
+    use dynamic_config::{Lease, RenewableSource};
+
+    let (address, seen) = recording(vec![
+        "HTTP/1.1 204 No Content\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".to_owned(),
+    ]);
+
+    let source = Vault::new(&address, "database", "creds/app")
+        .with_token("root")
+        .with_dynamic();
+
+    source
+        .revoke(&Lease {
+            id: "database/creds/app/1a2b".to_owned(),
+            ttl: Duration::from_secs(3600),
+            renewable: true,
+        })
+        .expect("204 is how Vault says the lease is gone");
+
+    let request = &seen.lock().unwrap()[0];
+    assert!(request.contains("POST /v1/sys/leases/revoke "), "{request}");
+}
+
+/// The invariant that matters most here: a dynamic secret's body holds the
+/// generated username and password, and a failure must not quote it.
+#[test]
+fn no_part_of_a_dynamic_response_reaches_an_error() {
+    let (address, _seen) = recording(vec![http("500 Internal Server Error", ISSUED)]);
+
+    let source = Vault::new(&address, "database", "creds/app")
+        .with_token("root")
+        .with_dynamic();
+
+    let error = source.fetch().expect_err("a 500 is a failure").to_string();
+
+    assert!(!error.contains("v-root-app-xyz"), "{error}");
+    assert!(!error.contains("A1b2C3"), "{error}");
+    assert!(!error.contains("1a2b"), "{error}");
+}
+
+/// An unleased engine — `transit`, or a KV v1 mount read this way — answers
+/// without a `lease_id`. That is a document, not a credential, and pretending
+/// it had a lease would schedule renewals of nothing.
+#[test]
+fn a_response_without_a_lease_id_carries_no_lease() {
+    let (address, _seen) = recording(vec![http(
+        "200 OK",
+        r#"{"lease_id": "", "lease_duration": 0, "renewable": false, "data": {"host": "db"}}"#,
+    )]);
+
+    let source = Vault::new(&address, "kv", "myapp")
+        .with_token("root")
+        .with_dynamic();
+
+    let document = source.fetch().expect("the read succeeds");
+
+    assert!(document.lease.is_none());
+}
+
+/// A deleted secret is `Absent`, not `Remote`. The difference is the whole
+/// point: waiting cures an unreachable store and does not bring back a key,
+/// and calling the second one the first is how a stale document goes on
+/// being served with every health check reporting fine.
+#[test]
+fn a_deleted_secret_is_absent_rather_than_an_outage() {
+    use dynamic_config::ErrorKind;
+
+    let (address, _seen) = recording(vec![http(
+        "200 OK",
+        r#"{"data": {"data": null, "metadata": {"version": 7, "destroyed": false}}}"#,
+    )]);
+
+    let source = Vault::new(&address, "secret", "myapp/db").with_token("root");
+
+    let error = source.fetch().expect_err("a deleted version has no values");
+
+    assert_eq!(error.kind(), ErrorKind::Absent, "{error}");
+}
+
+#[test]
+fn a_404_is_absent_too() {
+    use dynamic_config::ErrorKind;
+
+    let (address, _seen) = recording(vec![http("404 Not Found", r#"{"errors": []}"#)]);
+
+    let source = Vault::new(&address, "secret", "myapp/db").with_token("root");
+
+    let error = source.fetch().expect_err("nothing is there");
+
+    assert_eq!(error.kind(), ErrorKind::Absent, "{error}");
+}
+
+/// The two modes name each other in their refusals, because reading a KV
+/// mount as dynamic (or the reverse) is the mistake the explicit builder
+/// exists to make visible.
+#[test]
+fn reading_a_kv2_mount_as_dynamic_says_which_builder_to_drop() {
+    let (address, _seen) = recording(vec![http("200 OK", r#"{"lease_id": ""}"#)]);
+
+    let source = Vault::new(&address, "secret", "myapp/db")
+        .with_token("root")
+        .with_dynamic();
+
+    let error = source.fetch().expect_err("no `data` member").to_string();
+
+    assert!(error.contains("with_dynamic()"), "{error}");
+}
+
+#[test]
+fn a_dynamic_source_reports_interval_because_there_is_no_counter_to_poll() {
+    use dynamic_config::WatchCapability;
+
+    let dynamic = Vault::new("http://127.0.0.1:1", "database", "creds/app").with_dynamic();
+    let kv2 = Vault::new("http://127.0.0.1:1", "secret", "myapp/db");
+
+    assert_eq!(dynamic.watch_capability(), WatchCapability::Interval);
+    assert_eq!(kv2.watch_capability(), WatchCapability::Conditional);
+}
+
+/// One credential per source, said out loud. Merging several dynamic reads
+/// would leave every lease but one unrenewed and unrevoked — a credential
+/// leak wearing a merge's clothes.
+#[test]
+fn a_dynamic_source_refuses_several_paths() {
+    let source = Vault::new("http://127.0.0.1:1", "database", Keys::several(["a", "b"]))
+        .with_token("root")
+        .with_dynamic();
+
+    let error = source
+        .fetch()
+        .expect_err("several dynamic paths")
+        .to_string();
+
+    assert!(error.contains("one path"), "{error}");
+    assert!(error.contains("lease"), "{error}");
+}

@@ -93,7 +93,11 @@ pub fn merged(
     described: &str,
 ) -> Result<Fetched, Error> {
     match documents {
-        [] => Err(Error::remote(format!(
+        // `absent`, not `remote`: the store answered. Calling this an
+        // outage is what let a deleted secret be served for as long as the
+        // pod lived, with every health check reporting a healthy store —
+        // waiting cures an outage and does not bring a key back.
+        [] => Err(Error::absent(format!(
             "{described}: no key held a value, so there is nothing to load"
         ))),
 

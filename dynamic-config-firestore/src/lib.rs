@@ -148,7 +148,9 @@ mod value;
 
 use std::time::Duration;
 
-use dynamic_config::{Error, Fetched, Format, RemoteSink, RemoteSource, WatchCapability, Watching};
+use dynamic_config::{
+    Error, Fetched, Format, RemoteSink, RemoteSource, Revision, WatchCapability, Watching,
+};
 use dynamic_config_store_core::attempts::Attempts;
 use dynamic_config_store_core::documents::{self, Overlap};
 use dynamic_config_store_core::guarded;
@@ -594,7 +596,16 @@ impl Firestore {
 
         let (document, updated) = self.section_of(&body, path)?;
 
-        Ok((Fetched::new(document, Format::Json), updated))
+        // `updateTime` is a timestamp the service writes, and comparing two
+        // of them for order would mean trusting their clock and our parsing
+        // of it. Equality is all this needs and all it claims.
+        let document = match &updated {
+            Some(updated) => Fetched::new(document, Format::Json)
+                .with_revision(Revision::Opaque(updated.clone())),
+            None => Fetched::new(document, Format::Json),
+        };
+
+        Ok((document, updated))
     }
 
     /// One document's `fields`, wrapped under the section key, and its

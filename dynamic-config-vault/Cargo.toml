@@ -27,7 +27,13 @@ serde_json = "1.0.149"
 
 [dev-dependencies]
 testcontainers = { version = "0.27", features = ["blocking"] }
-testcontainers-modules = { version = "0.15", features = ["hashicorp_vault"] }
+# `postgres` beside `hashicorp_vault`: a *lease* needs an engine that mints
+# credentials, and the database engine is the one Vault ships that needs no
+# cloud account. Dev-only, and the lease test is the only thing that uses it.
+testcontainers-modules = { version = "0.15", features = [
+    "hashicorp_vault",
+    "postgres",
+] }
 # A self-signed certificate authority, generated in the test. TLS is the one
 # feature whose tests cannot use a fixture: a certificate expires, and a
 # committed one turns into a suite that fails on a date nobody chose. Dev-only,

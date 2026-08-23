@@ -192,7 +192,7 @@ use std::pin::Pin;
 use std::time::Duration;
 
 use dynamic_config::{
-    AsyncRemoteSource, Error, Fetched, Format, RemoteSink, WatchCapability, Watching,
+    AsyncRemoteSource, Error, Fetched, Format, RemoteSink, Revision, WatchCapability, Watching,
 };
 use dynamic_config_store_core::attempts::Attempts;
 use dynamic_config_store_core::documents::{self, Overlap};
@@ -923,7 +923,14 @@ impl Etcd {
                 // the store answered, `apply` already counted the delivery,
                 // and whether the document installs is `ConfigStatus`'s half
                 // of the picture.
-                guarded(&mut on_change, document, &self.describe())?;
+                guarded(
+                    &mut on_change,
+                    // The revision the whole range was read at, so every key
+                    // under the prefix is ordered by the one instant they
+                    // were read as.
+                    document.with_revision(Revision::Counter(u64::try_from(revision).unwrap_or(0))),
+                    &self.describe(),
+                )?;
 
                 continue;
             }
@@ -944,7 +951,17 @@ impl Etcd {
                     )))
                 })?;
 
-                guarded(&mut on_change, Fetched::new(text, format), &self.describe())?;
+                guarded(
+                    &mut on_change,
+                    // `mod_revision` is the revision this key was last
+                    // written at — the key's own version rather than the
+                    // cluster's, which is what a document ought to be
+                    // ordered by.
+                    Fetched::new(text, format).with_revision(Revision::Counter(
+                        u64::try_from(value.mod_revision()).unwrap_or(0),
+                    )),
+                    &self.describe(),
+                )?;
             }
         }
 
@@ -1374,6 +1391,22 @@ fn tls_options(tls: &TlsConfig, described: &str) -> Result<TlsOptions, Error> {
 
     if let Some((certificate, key)) = tls.client_certificate_pem(described)? {
         options = options.identity(Identity::from_pem(certificate, key));
+    }
+
+    if let Some(name) = tls.server_name() {
+        // The one setting this store expresses better than its HTTP
+        // siblings: tonic checks the certificate against this name instead
+        // of the endpoint's host, so an endpoint written as an IP can still
+        // authenticate the server it reaches.
+        options = options.domain_name(name);
+    }
+
+    if tls.skips_verification() {
+        return Err(dynamic_config_store_core::tls::unsupported(
+            described,
+            "connecting without verifying the server",
+            "tonic exposes no such switch; name the authority with              `with_ca_certificate_file`, or the certificate's own name with              `with_server_name` when the address is an IP",
+        ));
     }
 
     Ok(options)

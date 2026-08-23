@@ -160,7 +160,9 @@
 use std::time::Duration;
 
 use base64::Engine;
-use dynamic_config::{Error, Fetched, Format, RemoteSink, RemoteSource, WatchCapability, Watching};
+use dynamic_config::{
+    Error, Fetched, Format, Pace, RemoteSink, RemoteSource, Revision, WatchCapability, Watching,
+};
 use dynamic_config_store_core::attempts::Attempts;
 use dynamic_config_store_core::credential::{Cached, Issued};
 use dynamic_config_store_core::documents::{self, Overlap};
@@ -686,6 +688,12 @@ impl Consul {
         // way a file watcher does not announce an edit when it starts.
         let mut priming = true;
 
+        // The retry after a failure is paced rather than a flat five
+        // seconds. A blocking query is a long poll, so this pace governs
+        // only the failures — which is exactly where a fleet that lost its
+        // agent together would otherwise come back to it together.
+        let mut pace = Pace::new(RETRY_AFTER);
+
         while watching.keep_going() {
             let answered = match self.blocking_read(&agent, watched, recurse, index) {
                 Ok(answered) => answered,
@@ -698,10 +706,13 @@ impl Consul {
                     // stop from waiting out the whole pause.
                     self.attempts.failed(&error);
 
-                    watching.sleep_for(RETRY_AFTER);
+                    pace.failed();
+                    pace.wait(watching);
                     continue;
                 }
             };
+
+            pace.succeeded();
 
             // Consul resets its index on a restart or a key being recreated; a
             // stale one would then park the query forever.
@@ -762,7 +773,16 @@ impl Consul {
             // `ConfigStatus`'s business, and `RemoteSink::apply` already
             // records it there. Charging it to the store would make a bad
             // document read as an unreachable agent.
-            guarded(&mut on_change, Fetched::new(text, format), &self.describe())?;
+            guarded(
+                &mut on_change,
+                // The index Consul answered with. It counts up, so a late
+                // delivery is recognisable as old — the one exception being
+                // the reset above, which sets it back to zero deliberately
+                // and is why the store, not the engine, decides what an
+                // index means.
+                Fetched::new(text, format).with_revision(Revision::Counter(index)),
+                &self.describe(),
+            )?;
         }
 
         Ok(())

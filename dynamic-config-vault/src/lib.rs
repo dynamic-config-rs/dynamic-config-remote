@@ -167,7 +167,10 @@
 
 use std::time::Duration;
 
-use dynamic_config::{Error, Fetched, Format, RemoteSink, RemoteSource, WatchCapability, Watching};
+use dynamic_config::{
+    Error, Fetched, Format, Lease, Pace, RemoteSink, RemoteSource, RenewableSource, Revision,
+    WatchCapability, Watching,
+};
 use dynamic_config_store_core::attempts::Attempts;
 use dynamic_config_store_core::credential::Issued;
 use dynamic_config_store_core::documents::{self, Overlap};
@@ -175,9 +178,11 @@ use dynamic_config_store_core::guarded;
 
 pub mod auth;
 mod tls;
+pub mod transit;
 
 pub use auth::Auth;
 use auth::{Session, Token};
+pub use transit::Transit;
 
 /// A private certificate authority and a client certificate, as data.
 ///
@@ -202,6 +207,7 @@ const DEFAULT_TIMEOUT: Duration = Duration::from_secs(10);
 /// folded into one section collides on every field name two secrets share. The
 /// crate documentation says the whole of it.
 #[derive(Clone, Debug, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum Keys {
     /// One path, whose fields are the whole section.
     One(String),
@@ -311,6 +317,32 @@ enum CheckError {
     Transient(Error),
 }
 
+/// Which shape of secret this source reads.
+///
+/// Vault's engines answer in two different shapes, and a source that
+/// guessed between them would turn a mistyped mount into a puzzle. So the
+/// caller says which, and the default is the one every existing user has.
+///
+/// ```text
+/// Kv2      GET /v1/{mount}/data/{path}   values under `data.data`, a version
+/// Dynamic  GET /v1/{mount}/{path}        values under `data`, a lease
+/// ```
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[non_exhaustive]
+pub enum Mode {
+    /// The KV version 2 engine: a document somebody wrote, with a version.
+    #[default]
+    Kv2,
+    /// An engine that *mints* a credential — `database/creds`, `pki/issue`,
+    /// `aws/creds` — answering with a lease that can be renewed and revoked.
+    ///
+    /// There is no version counter and no metadata endpoint here, so a
+    /// source in this mode reports
+    /// [`Interval`](dynamic_config::WatchCapability::Interval): the only way
+    /// to learn that a credential changed is that a new one was issued.
+    Dynamic,
+}
+
 /// A secret in Vault's KV v2 store, as a configuration source.
 ///
 /// Not `Clone`: the session holds the current token, and two clones sharing a
@@ -319,6 +351,7 @@ enum CheckError {
 pub struct Vault {
     address: String,
     mount: String,
+    mode: Mode,
     keys: Keys,
     key: String,
     auth: Auth,
@@ -339,10 +372,106 @@ pub struct Vault {
     /// message because `Error` is deliberately not `Clone`; every failure this
     /// can hold is a `remote` one, so re-wrapping loses nothing.
     default_agent: std::sync::OnceLock<Result<ureq::Agent, String>>,
+    /// How many requests this source may have out at once.
+    ///
+    /// A watch, a resync, an auth refresh and a lease renewal can all be in
+    /// flight together, and five thousand pods doing that to one Vault is
+    /// the number this exists for.
+    concurrency: dynamic_config_store_core::concurrency::StoreRuntimePolicy,
     /// Where [`watch`](Vault::watch) reports a tick that came back with
     /// nothing; see [`reporting_to`](Vault::reporting_to). Nobody, by default,
     /// which is what makes reporting free for a caller who never asked for it.
     attempts: Attempts,
+}
+
+/// The lease a dynamic-secret response was issued under.
+///
+/// Modelled on `token_from`, which already reads the same two fields out of
+/// the `auth` block — including the rule that zero means *never expires*
+/// rather than *already expired*.
+fn lease_of(body: &serde_json::Value) -> Option<Lease> {
+    let id = body.get("lease_id").and_then(serde_json::Value::as_str)?;
+
+    // An empty `lease_id` is Vault's way of saying "this one is not leased",
+    // and a lease nobody can name is a lease nobody can renew or revoke.
+    if id.is_empty() {
+        return None;
+    }
+
+    let ttl = body
+        .get("lease_duration")
+        .and_then(serde_json::Value::as_u64)
+        .unwrap_or(0);
+
+    let ttl = certificate_life(body).map_or(Duration::from_secs(ttl), |until| {
+        // Whichever runs out first. A PKI role can hand back a lease longer
+        // than the certificate it issued — the lease is an accounting
+        // record, the `notAfter` is what a TLS peer enforces — and a
+        // credential re-issued after its certificate stopped verifying is
+        // an outage that looks like a network fault.
+        if ttl == 0 {
+            until
+        } else {
+            until.min(Duration::from_secs(ttl))
+        }
+    });
+
+    Some(Lease {
+        id: id.to_owned(),
+        ttl,
+        renewable: body
+            .get("renewable")
+            .and_then(serde_json::Value::as_bool)
+            .unwrap_or(false),
+    })
+}
+
+/// How long a `pki/issue` certificate has left, where the response is one.
+///
+/// Vault answers `data.expiration` as the certificate's `notAfter` in
+/// seconds since the epoch, so the certificate's own clock is readable
+/// without an X.509 parser — and without a dependency whose whole job would
+/// be re-deriving a number the server already sent.
+///
+/// `None` for every other engine: a database credential has no `expiration`
+/// and its lease is the only clock there is.
+fn certificate_life(body: &serde_json::Value) -> Option<Duration> {
+    let expiration = body
+        .get("data")?
+        .get("expiration")
+        .and_then(serde_json::Value::as_i64)?;
+
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .ok()?
+        .as_secs();
+
+    let remaining = expiration - i64::try_from(now).ok()?;
+
+    // Wall clocks, and two of them: this is the one place in the crate that
+    // cannot use an `Instant`, because the number came from another machine.
+    // A certificate that looks already expired *from here* is therefore far
+    // more likely to be a skewed clock than an expired certificate — and
+    // answering `None` falls back to the lease rather than re-issuing in a
+    // tight loop against a Vault that thinks everything is fine.
+    //
+    // Zero is refused for the same reason as negative, and for one more: a
+    // zero TTL would schedule the next re-issue immediately, which is the
+    // fetch storm this guard exists to prevent.
+    if remaining <= 0 {
+        return None;
+    }
+
+    u64::try_from(remaining).ok().map(Duration::from_secs)
+}
+
+/// One read, in the three things a caller can want from it.
+struct Reading {
+    document: String,
+    /// Zero on any engine that has no version counter.
+    version: u64,
+    /// Present only for an engine that issues leases.
+    lease: Option<Lease>,
 }
 
 impl Vault {
@@ -363,6 +492,7 @@ impl Vault {
         Self {
             address: address.into().trim_end_matches('/').to_owned(),
             mount: mount.into(),
+            mode: Mode::Kv2,
             keys: path.into(),
             key: "db".to_owned(),
             // No credentials until one is supplied; the first read then says so
@@ -375,8 +505,29 @@ impl Vault {
             agent: None,
             tls: None,
             default_agent: std::sync::OnceLock::new(),
+            concurrency: dynamic_config_store_core::concurrency::StoreRuntimePolicy::default(),
             attempts: Attempts::default(),
         }
+    }
+
+    /// Reads a *dynamic* secret rather than a KV v2 document.
+    ///
+    /// Turns the read into `GET /v1/{mount}/{path}` — no `data/` segment —
+    /// takes the values from `data` rather than `data.data`, and keeps the
+    /// `lease_id`, `lease_duration` and `renewable` the engine answered
+    /// with. That last part is the point: a dynamic credential belongs to
+    /// this reader alone and expires, so somebody has to renew it and hand
+    /// it back, and nobody can do either without the lease.
+    ///
+    /// Explicit rather than detected from the response, because a mistyped
+    /// mount would otherwise fall quietly into the other mode and read as a
+    /// puzzle instead of an error.
+    ///
+    /// See [`RenewableSource`] for the other half.
+    #[must_use]
+    pub fn with_dynamic(mut self) -> Self {
+        self.mode = Mode::Dynamic;
+        self
     }
 
     /// The section key to wrap the secret under.
@@ -642,6 +793,14 @@ impl Vault {
 
         let mut seen: Option<u64> = None;
 
+        // The waits are paced rather than flat. Two failures deserve it for
+        // different reasons: a sealed Vault should not be polled at full
+        // rate by every pod that depends on it, and a *deleted* secret is a
+        // condition that will not resolve on its own — the loop keeps
+        // watching, because it may be written again, but it stops asking
+        // every interval forever.
+        let mut pace = Pace::new(interval);
+
         while watching.keep_going() {
             match self.current_version() {
                 // The first tick records the version without firing: the value
@@ -658,6 +817,7 @@ impl Vault {
                     match self.read() {
                         Ok((document, version)) => {
                             seen = Some(version);
+                            pace.succeeded();
 
                             // A callback that refuses is deliberately not a
                             // failed attempt: Vault answered and the secret
@@ -671,7 +831,10 @@ impl Vault {
                         // and the attempt is recorded, because a counter that
                         // moved and a secret that will not come back is the
                         // shape of a policy that stopped allowing the read.
-                        Err(error) => self.attempts.failed(&error),
+                        Err(error) => {
+                            pace.failed();
+                            self.attempts.failed(&error);
+                        }
                     }
                 }
 
@@ -689,13 +852,16 @@ impl Vault {
                 // The check failed and may yet come good: waited out rather
                 // than reported to the caller, recorded rather than swallowed.
                 // This is the arm that made a sealed Vault look healthy.
-                Err(CheckError::Transient(error)) => self.attempts.failed(&error),
+                Err(CheckError::Transient(error)) => {
+                    pace.failed();
+                    self.attempts.failed(&error);
+                }
 
                 // Unchanged: the store answered, and there is nothing to say.
-                Ok(_) => {}
+                Ok(_) => pace.succeeded(),
             }
 
-            watching.sleep_for(interval);
+            pace.wait(watching);
         }
 
         Ok(())
@@ -714,6 +880,25 @@ impl Vault {
             Keys::Several(_) => Err(Error::remote(format!(
                 "{}: a source that reads several paths cannot be watched; \
                  poll `refresh_remote()` on a timer instead",
+                self.describe()
+            ))),
+        }
+    }
+
+    /// The one path a *dynamic* source reads.
+    ///
+    /// Dynamic mode is deliberately single-path. Every dynamic read mints a
+    /// credential with a lease of its own, and a document carries one lease
+    /// — so merging several would leave every lease but one unrenewed and
+    /// unrevoked, which is a credential leak wearing a merge's clothes.
+    fn single_dynamic_path(&self) -> Result<&str, Error> {
+        match &self.keys {
+            Keys::One(path) => Ok(path),
+            Keys::Several(_) => Err(Error::remote(format!(
+                "{}: a dynamic-secret source reads one path. Each read mints \
+                 a credential with its own lease, and merging them would \
+                 leave every lease but one unrenewed — use one source per \
+                 credential",
                 self.describe()
             ))),
         }
@@ -776,6 +961,19 @@ impl Vault {
     }
 
     fn get_once(&self, url: &str, what: &str) -> Result<serde_json::Value, CallError> {
+        // The ceiling, taken for the length of the request. A refusal is
+        // not a queue: the caller backs off through the `Pace` it already
+        // has, because a watch delivery held behind a resync held behind an
+        // auth refresh helps nobody and none of them is improved by being
+        // later.
+        let _permit = self.concurrency.admit().ok_or_else(|| {
+            CallError::Other(Error::remote(format!(
+                "{}: {} requests already in flight",
+                self.describe(),
+                self.concurrency.limit()
+            )))
+        })?;
+
         let token = self.token().map_err(CallError::Other)?;
 
         // A TLS configuration that will not build is not a refused token, so
@@ -800,6 +998,11 @@ impl Vault {
 
                 match error {
                     ureq::Error::StatusCode(403) => CallError::Forbidden(Error::auth(described)),
+                    // Vault answers 404 for a path that holds nothing —
+                    // deleted, or never written. The store answered, so
+                    // this is not an outage, and calling it one is how a
+                    // deleted secret goes on being served in silence.
+                    ureq::Error::StatusCode(404) => CallError::Other(Error::absent(described)),
                     _ => CallError::Other(Error::remote(described)),
                 }
             })?
@@ -889,32 +1092,97 @@ impl Vault {
     /// Extends the current token's lease.
     fn renew(&self, token: &str) -> Result<Issued<Token>, Error> {
         let url = format!("{}/v1/auth/token/renew-self", self.address);
-
-        let mut request = self.agent()?.post(&url).header("X-Vault-Token", token);
-
-        if let Some(namespace) = &self.namespace {
-            request = request.header("X-Vault-Namespace", namespace);
-        }
-
-        let response: serde_json::Value = request
-            .send_json(serde_json::json!({}))
-            .map_err(|error| {
-                Error::remote(format!("{}: renewal failed: {error}", self.describe()))
-            })?
-            .body_mut()
-            .read_json()
-            .map_err(|error| {
-                Error::remote(format!(
-                    "{}: the renewal response was not JSON: {error}",
-                    self.describe()
-                ))
-            })?;
+        let response = self.post(&url, token, serde_json::json!({}), "renewal")?;
 
         // Renewal answers with the lease but not the token: it is the same one.
         let mut renewed = self.token_from(&response, "auth")?;
         renewed.value.secret = token.to_owned();
 
         Ok(renewed)
+    }
+
+    /// One authenticated POST against this Vault, for a caller outside the
+    /// read path.
+    ///
+    /// The transit decryptor is that caller: it needs this Vault's address,
+    /// credential, TLS configuration and namespace, and needs none of the
+    /// KV or dynamic read logic above them. Authenticating a second time
+    /// from a second object would mean a second token, a second renewal and
+    /// a second login on every restart.
+    ///
+    /// # Errors
+    ///
+    /// If the credential cannot be obtained, or the call fails. `what`
+    /// names the call; the body never reaches the message.
+    pub fn post_authenticated(
+        &self,
+        url: &str,
+        body: serde_json::Value,
+        what: &str,
+    ) -> Result<serde_json::Value, Error> {
+        let token = self.token()?;
+
+        self.post(url, &token, body, what)
+    }
+
+    /// The address this Vault was built with, without its trailing slash.
+    #[must_use]
+    pub fn address(&self) -> &str {
+        &self.address
+    }
+
+    /// One authenticated POST, in the shape `get_once` already established.
+    ///
+    /// `login` and the token renewal each built their own request, header
+    /// and error mapping; the lease calls would have been the third and
+    /// fourth copy. `what` names the call in a failure — never the body,
+    /// which for a dynamic secret holds the generated username and password.
+    fn post(
+        &self,
+        url: &str,
+        token: &str,
+        body: serde_json::Value,
+        what: &str,
+    ) -> Result<serde_json::Value, Error> {
+        let _permit = self.concurrency.admit().ok_or_else(|| {
+            Error::remote(format!(
+                "{}: {} requests already in flight",
+                self.describe(),
+                self.concurrency.limit()
+            ))
+        })?;
+
+        let mut request = self.agent()?.post(url).header("X-Vault-Token", token);
+
+        if let Some(namespace) = &self.namespace {
+            request = request.header("X-Vault-Namespace", namespace);
+        }
+
+        let text = request
+            .send_json(body)
+            .map_err(|error| Error::remote(format!("{}: {what} failed: {error}", self.describe())))?
+            .body_mut()
+            .read_to_string()
+            .map_err(|error| {
+                Error::remote(format!(
+                    "{}: the {what} response could not be read: {error}",
+                    self.describe()
+                ))
+            })?;
+
+        // A revocation answers 204 with no body at all, and "it worked" is
+        // not a parse failure. Read as text first so an empty answer is the
+        // success it is.
+        if text.trim().is_empty() {
+            return Ok(serde_json::Value::Null);
+        }
+
+        serde_json::from_str(&text).map_err(|error| {
+            Error::remote(format!(
+                "{}: the {what} response was not JSON: {error}",
+                self.describe()
+            ))
+        })
     }
 
     /// Reads a token, its lease and whether it renews out of an `auth` block.
@@ -992,12 +1260,14 @@ impl Vault {
     }
 
     fn url(&self, path: &str) -> String {
-        format!(
-            "{}/v1/{}/data/{}",
-            self.address,
-            self.mount,
-            path.trim_start_matches('/')
-        )
+        let path = path.trim_start_matches('/');
+
+        match self.mode {
+            // KV v2 nests reads under `data/`; every other engine is read at
+            // the path itself.
+            Mode::Kv2 => format!("{}/v1/{}/data/{path}", self.address, self.mount),
+            Mode::Dynamic => format!("{}/v1/{}/{path}", self.address, self.mount),
+        }
     }
 
     fn metadata_url(&self, path: &str) -> String {
@@ -1017,9 +1287,22 @@ impl Vault {
     /// cannot disagree — which is the whole point of not asking twice.
     fn read(&self) -> Result<(Fetched, u64), Error> {
         let path = self.single_path()?;
-        let (document, version) = self.read_one(path)?;
+        let read = self.read_one(path)?;
 
-        Ok((Fetched::new(document, Format::Json), version))
+        let mut document = Fetched::new(read.document, Format::Json);
+
+        // KV v2 versions count up, so that one is orderable — which is what
+        // lets a late read be recognised as old rather than installed over a
+        // newer one. A dynamic engine has no counter to offer.
+        if self.mode == Mode::Kv2 {
+            document = document.with_revision(Revision::Counter(read.version));
+        }
+
+        if let Some(lease) = read.lease.clone() {
+            document = document.with_lease(lease);
+        }
+
+        Ok((document, read.version))
     }
 
     /// One secret, wrapped under the section key, and its version.
@@ -1028,9 +1311,17 @@ impl Vault {
     /// is what makes the merge mean something: two secrets supplying `host`
     /// collide at `db.host`, which is the path a reader of the configuration
     /// would name, not at a bare `host` that belongs to nothing.
-    fn read_one(&self, path: &str) -> Result<(String, u64), Error> {
+    fn read_one(&self, path: &str) -> Result<Reading, Error> {
         let body = self.get(&self.url(path), "secret")?;
 
+        match self.mode {
+            Mode::Kv2 => self.read_kv2(path, &body),
+            Mode::Dynamic => self.read_dynamic(path, &body),
+        }
+    }
+
+    /// A KV v2 read: values one level down, a version beside them.
+    fn read_kv2(&self, path: &str, body: &serde_json::Value) -> Result<Reading, Error> {
         // KV v2 nests the values one level down; anything else is a v1 mount or
         // an error page, and either way not what was asked for.
         let values = body
@@ -1038,12 +1329,22 @@ impl Vault {
             .and_then(|data| data.get("data"))
             .ok_or_else(|| {
                 Error::remote(format!(
-                    "{}: `{path}` answered without `data.data`; is this a KV v2 mount?",
+                    "{}: `{path}` answered without `data.data`; is this a KV v2 \
+                     mount? A dynamic-secret engine is read with \
+                     `with_dynamic()`",
                     self.describe()
                 ))
             })?;
 
-        let document = serde_json::json!({ &self.key: values });
+        // A KV v2 soft delete answers 200 with `data.data` set to null: the
+        // version is still there, its values are not. That is a document
+        // that is gone, not a mount that is the wrong kind.
+        if values.is_null() {
+            return Err(Error::absent(format!(
+                "{}: `{path}` holds no values; the version is deleted",
+                self.describe()
+            )));
+        }
 
         // Absent on a v1 mount, which `data.data` has already ruled out; zero
         // is then a version that never matches a real one, so a watch keeps
@@ -1055,7 +1356,38 @@ impl Vault {
             .and_then(serde_json::Value::as_u64)
             .unwrap_or(0);
 
-        Ok((document.to_string(), version))
+        Ok(Reading {
+            document: serde_json::json!({ &self.key: values }).to_string(),
+            version,
+            lease: None,
+        })
+    }
+
+    /// A dynamic-secret read: values at `data`, and the lease they were
+    /// issued under.
+    fn read_dynamic(&self, path: &str, body: &serde_json::Value) -> Result<Reading, Error> {
+        let values = body.get("data").ok_or_else(|| {
+            Error::remote(format!(
+                "{}: `{path}` answered without `data`; is this a secrets \
+                 engine? A KV v2 mount is read without `with_dynamic()`",
+                self.describe()
+            ))
+        })?;
+
+        if values.is_null() {
+            return Err(Error::absent(format!(
+                "{}: `{path}` issued no credential",
+                self.describe()
+            )));
+        }
+
+        Ok(Reading {
+            document: serde_json::json!({ &self.key: values }).to_string(),
+            // No version counter on a dynamic engine: every read mints a new
+            // credential, so there is nothing to compare and nothing to poll.
+            version: 0,
+            lease: lease_of(body),
+        })
     }
 
     /// The `(path, document)` pairs this source reads, in merge order.
@@ -1068,7 +1400,7 @@ impl Vault {
         let mut documents = Vec::with_capacity(paths.len());
 
         for path in paths {
-            documents.push((path.clone(), self.read_one(path)?.0));
+            documents.push((path.clone(), self.read_one(path)?.document));
         }
 
         Ok(documents)
@@ -1092,8 +1424,69 @@ impl std::fmt::Debug for Vault {
     }
 }
 
+impl RenewableSource for Vault {
+    /// Extends a lease through `sys/leases/renew`.
+    ///
+    /// The answer is authoritative: Vault may grant less than was asked for
+    /// — a role's `max_ttl` is a ceiling the caller cannot see — so the next
+    /// renewal is scheduled from what came back, never from what was
+    /// requested. Asking for the lease's own TTL again is the honest
+    /// request: it says *as long as you gave me last time*.
+    fn renew(&self, lease: &Lease) -> Result<Lease, Error> {
+        let url = format!("{}/v1/sys/leases/renew", self.address);
+        let token = self.token()?;
+
+        let response = self.post(
+            &url,
+            &token,
+            serde_json::json!({
+                "lease_id": lease.id,
+                "increment": lease.ttl.as_secs(),
+            }),
+            "the lease renewal",
+        )?;
+
+        // A renewal answers with the lease at the top level, exactly as the
+        // issuing read did — so the same parser reads it.
+        lease_of(&response).ok_or_else(|| {
+            Error::remote(format!(
+                "{}: the renewal answered without a lease",
+                self.describe()
+            ))
+        })
+    }
+
+    /// Hands a lease back through `sys/leases/revoke`.
+    ///
+    /// The credential stops working now rather than at expiry. Best-effort
+    /// by nature — a caller doing this on the way out has somewhere else to
+    /// be — and the lease expires on its own regardless; revoking only
+    /// shortens the window in which a leaked credential is worth anything.
+    fn revoke(&self, lease: &Lease) -> Result<(), Error> {
+        let url = format!("{}/v1/sys/leases/revoke", self.address);
+        let token = self.token()?;
+
+        self.post(
+            &url,
+            &token,
+            serde_json::json!({ "lease_id": lease.id }),
+            "the lease revocation",
+        )
+        .map(|_| ())
+    }
+}
+
 impl RemoteSource for Vault {
     fn fetch(&self) -> Result<Fetched, Error> {
+        // Straight through `read`, which keeps the lease. The merge below
+        // builds a fresh document and would drop it — and a credential
+        // nobody can renew or revoke is worse than one that was never read.
+        if self.mode == Mode::Dynamic {
+            self.single_dynamic_path()?;
+
+            return self.read().map(|(document, _)| document);
+        }
+
         let documents = self.documents()?;
 
         // Read in call order, which is the order the rule wants — so nothing
@@ -1115,7 +1508,15 @@ impl RemoteSource for Vault {
     /// Conditional: the KV metadata endpoint answers with a version counter,
     /// so asking costs a small JSON body rather than the secret itself.
     fn watch_capability(&self) -> WatchCapability {
-        WatchCapability::Conditional
+        match self.mode {
+            // A KV v2 version counter is cheap to poll and says whether the
+            // document moved without sending it.
+            Mode::Kv2 => WatchCapability::Conditional,
+            // A dynamic engine has no counter and no metadata endpoint:
+            // every read mints a credential, so "has it changed?" is not a
+            // question that can be asked separately from "give me one".
+            Mode::Dynamic => WatchCapability::Interval,
+        }
     }
 
     fn watch(

@@ -131,7 +131,12 @@
 //!
 //! # Observability
 //!
-//! Two surfaces, and **no OpenTelemetry SDK**.
+//! Two surfaces, and **no OpenTelemetry SDK** — which is a decision about
+//! *this* program and not about the family. The engine offers an opt-in
+//! `otel` feature that records into a meter the application configured, and
+//! the Kubernetes binaries carry an exporter because they are programs and
+//! own their own `main`. This one is a program too, and answers differently
+//! for the reason below: it is the one that holds every service's secrets.
 //!
 //! [`/metrics`](#metrics) is the numbers; [`AuditSink`] is the record of who
 //! read what. Both are this crate's own, and the second is a trait rather

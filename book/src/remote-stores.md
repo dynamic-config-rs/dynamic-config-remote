@@ -10,7 +10,7 @@ below the environment.
 | [`dynamic-config-consul`](https://github.com/dynamic-config-rs/dynamic-config-remote/tree/main/dynamic-config-consul) | Consul KV | blocking | one key, several keys, or a subtree — a whole document | **Native** | a blocking query | ACL token, Kubernetes, JWT/OIDC |
 | [`dynamic-config-nats`](https://github.com/dynamic-config-rs/dynamic-config-remote/tree/main/dynamic-config-nats) | NATS JetStream KV | async | one key or several keys — a whole document | **Native** | a KV change stream | token, user/password, NKey, JWT, creds |
 | [`dynamic-config-redis`](https://github.com/dynamic-config-rs/dynamic-config-remote/tree/main/dynamic-config-redis) | Redis | blocking | one key, several keys, or a prefix — a whole document | **Native** | keyspace notifications | in the URL, TLS |
-| [`dynamic-config-vault`](https://github.com/dynamic-config-rs/dynamic-config-remote/tree/main/dynamic-config-vault) | Vault KV v2 | blocking | one path or several — a map of fields | Conditional | polling the version | token, AppRole, Kubernetes, JWT/OIDC, userpass, LDAP, cert |
+| [`dynamic-config-vault`](https://github.com/dynamic-config-rs/dynamic-config-remote/tree/main/dynamic-config-vault) | Vault KV v2, **or a dynamic-secret engine** | blocking | one path or several — a map of fields; one path in dynamic mode | Conditional (`Interval` in dynamic mode) | polling the version | token, AppRole, Kubernetes, JWT/OIDC, userpass, LDAP, cert |
 | [`dynamic-config-s3`](https://github.com/dynamic-config-rs/dynamic-config-remote/tree/main/dynamic-config-s3) | S3, and anything speaking it | async | one object, several objects, or a prefix — a whole document | Conditional | polling the ETag | the AWS credential chain |
 | [`dynamic-config-firestore`](https://github.com/dynamic-config-rs/dynamic-config-remote/tree/main/dynamic-config-firestore) | Firestore | blocking | one document or several — a map of fields | Conditional | polling `updateTime` | workload identity, an access token |
 | [`dynamic-config-git`](https://github.com/dynamic-config-rs/dynamic-config-remote/tree/main/dynamic-config-git) | any git host | blocking | one file, several, or a directory — out of one commit | Conditional | polling the ref advertisement | HTTPS token, SSH agent or key, anonymous |
@@ -18,6 +18,51 @@ below the environment.
 
 Each has its own README with the whole story, and an example that runs against a
 real server in a container.
+
+## What a store hands back
+
+A [`Fetched`](https://docs.rs/dynamic-config) is the document and, since
+0.10, two things a store may know about it.
+
+**A revision**, where the store names one. It comes in two shapes because
+stores answer the question in two genuinely different ways, and one shape
+would have to claim an order that half of them do not have:
+
+| Shape | Stores | Compared with |
+|---|---|---|
+| `Counter` | Vault KV versions, Consul indices, etcd revisions, NATS KV revisions, the config server's generation | `>` — lower is older |
+| `Opaque` | S3 ETags, git commits, Firestore `updateTime` | `!=` — the same one, or a different one |
+
+An ETag carries no order, so a source that returns one is saying *this is
+not the document you had*, not *this is newer*. Redis returns no revision at
+all: keyspace notifications carry none, and inventing one would be worse
+than the honest absence.
+
+What it buys is that a slow read of an old version can no longer land on top
+of a fast read of a new one — two fetches of one source are routinely in
+flight at once, and before this whichever finished last won.
+
+**A lease**, for a store that issues them. Only Vault's dynamic mode does
+today: a credential minted for one reader, with a TTL, renewable and
+revocable. See [`dynamic-config-vault`](remote-stores/vault.md).
+
+## When a document is not there
+
+A key that was deleted is `ErrorKind::Absent`, and that is a different
+answer from `Remote` — the store being unreachable — and from `Auth` — the
+store refusing you. The three deserve different reactions, which is the
+whole reason to tell them apart:
+
+```text
+Remote   the store did not answer      wait; it may come back
+Auth     the store refused you         stop; waiting will not help
+Absent   there is nothing at that path waiting will not bring it back either,
+                                       and the last good document is still serving
+```
+
+Before 0.10 the third was reported as the first, so a deleted Vault secret
+produced no delivery, no log line and no metric movement, and the stale
+document went on being served with every health check reporting fine.
 
 **What the watch column means.** A store says how it learns that its
 document changed, and a caller reads it to know what a watch is going to
@@ -606,3 +651,94 @@ What each store implements it with differs, because their clients do:
 A store that answers slowly but inside the deadline still succeeds; one
 that never answers fails with an error that says it timed out, and the
 previous snapshot keeps serving.
+
+### The defaults
+
+Ten seconds everywhere, and since 0.10 **including S3**, which had none.
+The AWS SDK ships without one, so an unanswered `GET` was
+indistinguishable from a slow one and could park a watch loop
+indefinitely — with the store reported healthy, because nothing had
+*failed*; it simply had not returned. The default applies where this crate
+builds the client; `S3::from_client` is the escape hatch and stays one,
+because a caller who configured their own client configured their own
+timeouts.
+
+Git is the one hole left, and it is named rather than papered over: `gix`'s
+HTTP transport waits forever on a host that accepts the connection and then
+sends nothing. The TLS transport bounds it; the reqwest one does not expose
+the knob. That is written in the source beside the code it constrains, not
+only here.
+
+## A stage between the store and the resolver
+
+A configuration document in git whose passwords are ciphertext: reviewable
+in a pull request, diffable, greppable, and useless to whoever clones the
+repository.
+
+```yaml
+database:
+  host: db.internal            # ordinary, and readable in review
+  password: vault:v1:8SDd3W…   # decrypted on the way into the process
+```
+
+`Transformed` is a source that holds a source and rewrites the document
+between the store answering and the engine parsing it:
+
+```rust,ignore
+use dynamic_config_store_core::transform::Transformed;
+use dynamic_config_vault::{Transit, Vault};
+
+let sealed = Git::new("https://github.com/acme/config.git").path("prod.yaml");
+let transit = Transit::new(Vault::new(address, "secret", "unused").with_token(token),
+                           "transit", "config");
+
+DatabaseConfig::builder("db")
+    .remote(Transformed::new(sealed, transit))
+    .init()?;
+```
+
+**It composes with every store**, which is why it is a wrapper rather than a
+stage inside the engine: decrypting a document from git, from S3, from
+Consul or from a config server is the same line, and an application that
+encrypts nothing pays nothing and reads nothing about it.
+
+**The revision and the lease pass through untouched.** A transform rewrites
+what the document *says*, not which version of it this is or what credential
+it was issued under — so the recency fence and the renewal timer go on
+working exactly as they did.
+
+### What `Transit` decrypts, and what it leaves alone
+
+Values, not documents. Encrypting the whole file would work and would throw
+away the reason to do it: a file that is one opaque blob cannot be reviewed,
+and a change to a port number looks the same as a change to a password.
+
+`vault:v1:…` tokens are found wherever they appear in the text and replaced
+with their plaintext. It is a substitution rather than a parse, because the
+document may be any of five formats, the marker is a token none of them
+produces by accident, and a decryptor that had to understand five formats
+would be five places for a format to be understood slightly wrong.
+
+One request whatever the count — the transit engine takes a batch — and **no
+request at all** for a document with nothing sealed in it, which is what
+makes it safe to leave in front of a store whose documents are only
+sometimes encrypted.
+
+It borrows the `Vault` beside it for its address, credential, TLS and
+namespace. A deployment that has said how to reach Vault once should not
+have to say it twice, and a second object would mean a second token, a
+second renewal, and a second login on every restart.
+
+### How many at once
+
+A source has a ceiling on requests in flight — ten by default, the same
+number and the same reason as the reference implementation's
+`max_connections_per_host`. A watch, a resync, an auth refresh and a lease
+renewal can all be out together, and five thousand pods doing that to one
+store is the number it exists for.
+
+A request past the ceiling is **refused rather than queued**, and backs off
+through the pace it already has. A queue would hold a watch delivery behind
+a resync behind an auth refresh, none of which is improved by being later —
+and "the store is busy" already has a mechanism here, so a second one would
+be a second thing to reason about.

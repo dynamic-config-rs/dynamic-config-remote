@@ -220,7 +220,7 @@ use std::time::Duration;
 
 use async_nats::jetstream::kv::{Operation, Store};
 use dynamic_config::{
-    AsyncRemoteSource, Error, Fetched, Format, RemoteSink, WatchCapability, Watching,
+    AsyncRemoteSource, Error, Fetched, Format, RemoteSink, Revision, WatchCapability, Watching,
 };
 use dynamic_config_store_core::attempts::Attempts;
 use dynamic_config_store_core::documents::{self, Overlap};
@@ -851,7 +851,13 @@ impl Nats {
             // store answered, `apply` already counted the delivery, and
             // whether the document installs is `ConfigStatus`'s half of the
             // picture.
-            guarded(&mut on_change, Fetched::new(text, format), &self.describe())?;
+            guarded(
+                &mut on_change,
+                // JetStream KV numbers every revision of a key, so this one
+                // is orderable.
+                Fetched::new(text, format).with_revision(Revision::Counter(entry.revision)),
+                &self.describe(),
+            )?;
         }
 
         // The stream ended without an error: the connection went away, or the
@@ -912,6 +918,25 @@ fn with_tls_options(
     tls: &TlsConfig,
     described: &str,
 ) -> Result<ConnectOptions, Error> {
+    if let Some(name) = tls.server_name() {
+        return Err(tls_core::unsupported(
+            described,
+            &format!("verifying against the name {name:?} rather than the address's"),
+            "`async-nats` takes no name override; address the server by the \
+             name its certificate carries",
+        ));
+    }
+
+    if tls.skips_verification() {
+        return Err(tls_core::unsupported(
+            described,
+            "connecting without verifying the server",
+            "`async-nats` reaches that only through a hand-built \
+             `rustls::ClientConfig`; name the authority with \
+             `with_ca_certificate_file` instead",
+        ));
+    }
+
     if let Some(ca) = tls.ca_certificate() {
         let path = ca.path().ok_or_else(|| {
             tls_core::unsupported(
