@@ -50,7 +50,7 @@ jobs:
         with:
           fetch-depth: 1
 
-      - uses: anthropics/claude-code-action@239e3a730883eeb5c53db12b0fc9573b3024b126 # v1
+      - uses: anthropics/claude-code-action@d70510b174a1244958df0b03166a54912811f3e6 # v1
         # The token rides in `env` as well as `with`: subscription OAuth
         # tokens intermittently fail to reach the Claude subprocess through
         # the input alone (anthropics/claude-code-action#1281, #676) — the
